@@ -124,7 +124,7 @@ async def get_files():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch files: {str(e)}")
 
-@api_router.get("/files/{file_id}/download")
+@api_router.get("/files/{file_id}/download", response_class=FileResponse)
 async def download_file(file_id: str):
     try:
         # Get file metadata from MongoDB
@@ -138,7 +138,8 @@ async def download_file(file_id: str):
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="File not found on disk")
         
-        return FileResponse(
+        from fastapi.responses import FileResponse as FastAPIFileResponse
+        return FastAPIFileResponse(
             path=file_path,
             filename=file_doc['original_filename'],
             media_type=file_doc.get('content_type', 'application/octet-stream')
