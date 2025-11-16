@@ -286,6 +286,53 @@ async def delete_file(file_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
 
+# File Sharing Permissions
+@api_router.put("/files/{file_id}/permissions")
+async def update_file_permissions(file_id: str, share_request: ShareRequest):
+    try:
+        file_doc = await db.files.find_one({"id": file_id}, {"_id": 0})
+        
+        if not file_doc:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Update permissions
+        await db.files.update_one(
+            {"id": file_id},
+            {"$set": {
+                "is_public": share_request.is_public,
+                "shared_with_users": share_request.shared_with_users
+            }}
+        )
+        
+        return {"message": "Permissions updated successfully", "file_id": file_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Permission update failed: {str(e)}")
+
+# WebRTC Signaling
+@api_router.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: str):
+    await manager.connect(user_id, websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            message = json.loads(data)
+            
+            # Forward signaling messages to target peer
+            if message.get("target"):
+                await manager.send_message(message["target"], {
+                    "from": user_id,
+                    "type": message.get("type"),
+                    "data": message.get("data")
+                })
+    except WebSocketDisconnect:
+        manager.disconnect(user_id)
+
+@api_router.get("/online-users")
+async def get_online_users():
+    return {"users": manager.get_online_users()}
+
 # Include the router in the main app
 app.include_router(api_router)
 
