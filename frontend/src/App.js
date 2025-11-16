@@ -108,18 +108,69 @@ function App() {
     }
   };
 
-  // Handle file download
-  const handleDownload = (fileId, filename) => {
-    const downloadUrl = `${BACKEND_URL}${API}/files/${fileId}/download`;
-    window.open(downloadUrl, "_blank");
+  // Handle file download with progress tracking
+  const handleDownload = async (fileId, filename) => {
+    try {
+      const downloadUrl = `${API}/files/${fileId}/download`;
+      
+      const startTime = Date.now();
+      let lastLoaded = 0;
+      let lastTime = startTime;
+      
+      const response = await axios.get(downloadUrl, {
+        responseType: 'blob',
+        onDownloadProgress: (progressEvent) => {
+          const currentTime = Date.now();
+          const timeElapsed = (currentTime - lastTime) / 1000;
+          const loaded = progressEvent.loaded;
+          const total = progressEvent.total || progressEvent.loaded;
+          const percentage = total > 0 ? Math.round((loaded * 100) / total) : 100;
+          
+          // Calculate speed
+          const bytesDownloaded = loaded - lastLoaded;
+          const speed = timeElapsed > 0 ? bytesDownloaded / timeElapsed : 0;
+          
+          // Calculate time remaining
+          const bytesRemaining = total - loaded;
+          const timeRemaining = speed > 0 ? bytesRemaining / speed : 0;
+          
+          setDownloadProgress({
+            progress: percentage,
+            speed: speed,
+            timeRemaining: timeRemaining,
+            fileName: filename,
+          });
+          
+          lastLoaded = loaded;
+          lastTime = currentTime;
+        },
+      });
+      
+      // Create blob and download
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      
+      // Clear progress after a short delay
+      setTimeout(() => {
+        setDownloadProgress(null);
+      }, 2000);
+    } catch (error) {
+      console.error("Error downloading file:", error);
+      alert("Failed to download file");
+      setDownloadProgress(null);
+    }
   };
 
-  // Copy share link
-  const handleCopyLink = (fileId) => {
-    const shareUrl = `${BACKEND_URL}/api/files/${fileId}/download`;
-    navigator.clipboard.writeText(shareUrl);
-    setCopiedId(fileId);
-    setTimeout(() => setCopiedId(null), 2000);
+  // Open share modal
+  const handleShare = (file) => {
+    setSelectedFile(file);
+    setShareModalOpen(true);
   };
 
   // Drag and drop handlers
