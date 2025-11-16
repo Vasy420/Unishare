@@ -212,11 +212,11 @@ function App() {
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         {/* Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-5xl font-bold text-white mb-4" data-testid="app-title">
+        <div className="text-center mb-8 md:mb-12">
+          <h1 className="text-3xl md:text-5xl font-bold text-white mb-2 md:mb-4" data-testid="app-title">
             File Sharing App
           </h1>
-          <p className="text-gray-300 text-lg">Upload, share, and manage your files easily</p>
+          <p className="text-gray-300 text-base md:text-lg">Upload, share, and manage your files easily</p>
         </div>
 
         {/* Upload Area */}
