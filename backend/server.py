@@ -33,7 +33,41 @@ app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
 
+# WebSocket connection manager for WebRTC signaling
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
+    
+    async def connect(self, user_id: str, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections[user_id] = websocket
+    
+    def disconnect(self, user_id: str):
+        if user_id in self.active_connections:
+            del self.active_connections[user_id]
+    
+    async def send_message(self, user_id: str, message: dict):
+        if user_id in self.active_connections:
+            await self.active_connections[user_id].send_json(message)
+    
+    def get_online_users(self):
+        return list(self.active_connections.keys())
+
+manager = ConnectionManager()
+
 # Define Models
+class User(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    username: str
+    created_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class UserResponse(BaseModel):
+    id: str
+    username: str
+    created_date: str
+
 class FileMetadata(BaseModel):
     model_config = ConfigDict(extra="ignore")
     
@@ -43,6 +77,10 @@ class FileMetadata(BaseModel):
     size: int
     content_type: Optional[str] = None
     upload_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    owner_id: Optional[str] = None
+    owner_username: Optional[str] = None
+    is_public: bool = True
+    shared_with_users: List[str] = Field(default_factory=list)
 
 class FileResponse(BaseModel):
     id: str
@@ -53,6 +91,14 @@ class FileResponse(BaseModel):
     upload_date: str
     download_url: str
     share_url: str
+    owner_username: Optional[str] = None
+    is_public: bool = True
+    shared_with_users: List[str] = []
+
+class ShareRequest(BaseModel):
+    file_id: str
+    is_public: bool
+    shared_with_users: List[str] = []
 
 # Add your routes to the router instead of directly to app
 @api_router.get("/")
