@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import {
   FacebookShareButton,
@@ -17,7 +17,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Copy, CheckCircle, Download, QrCode } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Copy, CheckCircle, Download, QrCode, Bluetooth, Wifi, Users, Lock, Globe } from "lucide-react";
+import webrtcManager from "@/utils/webrtcManager";
+import bluetoothManager from "@/utils/bluetoothManager";
 
 const ShareModal = ({ isOpen, onClose, file, shareUrl }) => {
   const [copied, setCopied] = useState(false);
