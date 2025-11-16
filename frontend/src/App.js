@@ -255,59 +255,55 @@ function App() {
         </div>
 
         {/* Files List */}
-        <div className="bg-slate-800/50 rounded-xl p-6 backdrop-blur-sm">
-          <h2 className="text-2xl font-bold text-white mb-6" data-testid="files-header">
+        <div className="bg-slate-800/50 rounded-xl p-4 md:p-6 backdrop-blur-sm">
+          <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6" data-testid="files-header">
             Uploaded Files ({files.length})
           </h2>
           
           {files.length === 0 ? (
-            <div className="text-center py-12" data-testid="empty-state">
-              <File className="w-16 h-16 mx-auto mb-4 text-gray-600" />
-              <p className="text-gray-400 text-lg">No files uploaded yet</p>
-              <p className="text-gray-500 text-sm mt-2">Upload your first file to get started</p>
+            <div className="text-center py-8 md:py-12" data-testid="empty-state">
+              <File className="w-12 h-12 md:w-16 md:h-16 mx-auto mb-3 md:mb-4 text-gray-600" />
+              <p className="text-gray-400 text-base md:text-lg">No files uploaded yet</p>
+              <p className="text-gray-500 text-xs md:text-sm mt-2">Upload your first file to get started</p>
             </div>
           ) : (
             <div className="space-y-3" data-testid="files-list">
               {files.map((file) => (
                 <div
                   key={file.id}
-                  className="bg-slate-700/50 rounded-lg p-4 flex items-center justify-between hover:bg-slate-700 transition-colors"
+                  className="bg-slate-700/50 rounded-lg p-3 md:p-4 flex flex-col sm:flex-row sm:items-center justify-between hover:bg-slate-700 transition-colors gap-3"
                   data-testid={`file-item-${file.id}`}
                 >
-                  <div className="flex items-center space-x-4 flex-1 min-w-0">
-                    <File className="w-10 h-10 text-purple-400 flex-shrink-0" />
+                  <div className="flex items-center space-x-3 md:space-x-4 flex-1 min-w-0">
+                    <File className="w-8 h-8 md:w-10 md:h-10 text-purple-400 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-white font-medium truncate" data-testid={`filename-${file.id}`}>
+                      <h3 className="text-white font-medium truncate text-sm md:text-base" data-testid={`filename-${file.id}`}>
                         {file.original_filename}
                       </h3>
-                      <div className="flex items-center space-x-4 text-sm text-gray-400 mt-1">
+                      <div className="flex items-center flex-wrap gap-2 text-xs md:text-sm text-gray-400 mt-1">
                         <span data-testid={`filesize-${file.id}`}>{formatFileSize(file.size)}</span>
-                        <span>•</span>
-                        <span data-testid={`filedate-${file.id}`}>{formatDate(file.upload_date)}</span>
+                        <span className="hidden sm:inline">•</span>
+                        <span data-testid={`filedate-${file.id}`} className="hidden sm:inline">{formatDate(file.upload_date)}</span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center space-x-2 flex-shrink-0">
+                  <div className="flex items-center space-x-2 flex-shrink-0 self-end sm:self-auto">
                     <button
                       onClick={() => handleDownload(file.id, file.original_filename)}
                       className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                       title="Download"
                       data-testid={`download-button-${file.id}`}
                     >
-                      <Download className="w-5 h-5" />
+                      <Download className="w-4 h-4 md:w-5 md:h-5" />
                     </button>
                     <button
-                      onClick={() => handleCopyLink(file.id)}
-                      className="p-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors relative"
-                      title="Copy share link"
-                      data-testid={`copy-button-${file.id}`}
+                      onClick={() => handleShare(file)}
+                      className="p-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                      title="Share"
+                      data-testid={`share-button-${file.id}`}
                     >
-                      {copiedId === file.id ? (
-                        <CheckCircle className="w-5 h-5" />
-                      ) : (
-                        <Copy className="w-5 h-5" />
-                      )}
+                      <Share2 className="w-4 h-4 md:w-5 md:h-5" />
                     </button>
                     <button
                       onClick={() => handleDelete(file.id)}
@@ -315,7 +311,7 @@ function App() {
                       title="Delete"
                       data-testid={`delete-button-${file.id}`}
                     >
-                      <Trash2 className="w-5 h-5" />
+                      <Trash2 className="w-4 h-4 md:w-5 md:h-5" />
                     </button>
                   </div>
                 </div>
@@ -324,6 +320,37 @@ function App() {
           )}
         </div>
       </div>
+
+      {/* Progress Indicators */}
+      {uploadProgress && (
+        <ProgressBar
+          progress={uploadProgress.progress}
+          speed={uploadProgress.speed}
+          timeRemaining={uploadProgress.timeRemaining}
+          fileName={uploadProgress.fileName}
+          operation="Uploading"
+        />
+      )}
+      
+      {downloadProgress && (
+        <ProgressBar
+          progress={downloadProgress.progress}
+          speed={downloadProgress.speed}
+          timeRemaining={downloadProgress.timeRemaining}
+          fileName={downloadProgress.fileName}
+          operation="Downloading"
+        />
+      )}
+
+      {/* Share Modal */}
+      {selectedFile && (
+        <ShareModal
+          isOpen={shareModalOpen}
+          onClose={() => setShareModalOpen(false)}
+          file={selectedFile}
+          shareUrl={`${BACKEND_URL}/api/files/${selectedFile.id}/download`}
+        />
+      )}
     </div>
   );
 }
