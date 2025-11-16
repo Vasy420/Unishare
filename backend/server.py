@@ -207,22 +207,32 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
 
 @api_router.get("/files", response_model=List[FileResponse])
-async def get_files():
+async def get_files(user_id: Optional[str] = None):
     try:
+        # Get all files (can filter by user in future)
         files = await db.files.find({}, {"_id": 0}).to_list(1000)
         
         file_responses = []
         for file_doc in files:
-            file_responses.append(FileResponse(
-                id=file_doc['id'],
-                filename=file_doc['filename'],
-                original_filename=file_doc['original_filename'],
-                size=file_doc['size'],
-                content_type=file_doc.get('content_type'),
-                upload_date=file_doc['upload_date'],
-                download_url=f"/api/files/{file_doc['id']}/download",
-                share_url=f"/api/files/{file_doc['id']}/download"
-            ))
+            # Show file if it's public OR if user is owner OR if shared with user
+            is_owner = user_id and file_doc.get('owner_id') == user_id
+            is_shared = user_id and user_id in file_doc.get('shared_with_users', [])
+            is_public = file_doc.get('is_public', True)
+            
+            if is_public or is_owner or is_shared:
+                file_responses.append(FileResponse(
+                    id=file_doc['id'],
+                    filename=file_doc['filename'],
+                    original_filename=file_doc['original_filename'],
+                    size=file_doc['size'],
+                    content_type=file_doc.get('content_type'),
+                    upload_date=file_doc['upload_date'],
+                    download_url=f"/api/files/{file_doc['id']}/download",
+                    share_url=f"/api/files/{file_doc['id']}/download",
+                    owner_username=file_doc.get('owner_username'),
+                    is_public=file_doc.get('is_public', True),
+                    shared_with_users=file_doc.get('shared_with_users', [])
+                ))
         
         return file_responses
     except Exception as e:
