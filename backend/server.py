@@ -105,6 +105,53 @@ class ShareRequest(BaseModel):
 async def root():
     return {"message": "File Sharing API"}
 
+# User Management Routes
+@api_router.post("/users", response_model=UserResponse)
+async def create_user(username: str):
+    try:
+        # Check if username already exists
+        existing_user = await db.users.find_one({"username": username})
+        if existing_user:
+            return UserResponse(
+                id=existing_user['id'],
+                username=existing_user['username'],
+                created_date=existing_user['created_date']
+            )
+        
+        # Create new user
+        user = User(username=username)
+        doc = user.model_dump()
+        doc['created_date'] = doc['created_date'].isoformat()
+        await db.users.insert_one(doc)
+        
+        return UserResponse(
+            id=user.id,
+            username=user.username,
+            created_date=doc['created_date']
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"User creation failed: {str(e)}")
+
+@api_router.get("/users", response_model=List[UserResponse])
+async def get_users():
+    try:
+        users = await db.users.find({}, {"_id": 0}).to_list(1000)
+        return [UserResponse(**user) for user in users]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch users: {str(e)}")
+
+@api_router.get("/users/{username}", response_model=UserResponse)
+async def get_user(username: str):
+    try:
+        user = await db.users.find_one({"username": username}, {"_id": 0})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return UserResponse(**user)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch user: {str(e)}")
+
 @api_router.post("/upload", response_model=FileResponse)
 async def upload_file(file: UploadFile = File(...)):
     try:
