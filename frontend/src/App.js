@@ -36,24 +36,60 @@ function App() {
     fetchFiles();
   }, []);
 
-  // Handle file upload
+  // Handle file upload with progress tracking
   const handleFileUpload = async (selectedFiles) => {
     if (!selectedFiles || selectedFiles.length === 0) return;
 
+    const file = selectedFiles[0];
     setUploading(true);
     const formData = new FormData();
-    formData.append("file", selectedFiles[0]);
+    formData.append("file", file);
+
+    const startTime = Date.now();
+    let lastLoaded = 0;
+    let lastTime = startTime;
 
     try {
       await axios.post(`${API}/upload`, formData, {
         headers: {
           "Content-Type": "multipart/form-data",
         },
+        onUploadProgress: (progressEvent) => {
+          const currentTime = Date.now();
+          const timeElapsed = (currentTime - lastTime) / 1000; // in seconds
+          const loaded = progressEvent.loaded;
+          const total = progressEvent.total;
+          const percentage = Math.round((loaded * 100) / total);
+          
+          // Calculate speed (bytes per second)
+          const bytesUploaded = loaded - lastLoaded;
+          const speed = timeElapsed > 0 ? bytesUploaded / timeElapsed : 0;
+          
+          // Calculate time remaining
+          const bytesRemaining = total - loaded;
+          const timeRemaining = speed > 0 ? bytesRemaining / speed : 0;
+          
+          setUploadProgress({
+            progress: percentage,
+            speed: speed,
+            timeRemaining: timeRemaining,
+            fileName: file.name,
+          });
+          
+          lastLoaded = loaded;
+          lastTime = currentTime;
+        },
       });
       await fetchFiles();
+      
+      // Clear progress after a short delay
+      setTimeout(() => {
+        setUploadProgress(null);
+      }, 2000);
     } catch (error) {
       console.error("Error uploading file:", error);
       alert("Failed to upload file");
+      setUploadProgress(null);
     } finally {
       setUploading(false);
     }
