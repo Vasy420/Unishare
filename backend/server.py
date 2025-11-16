@@ -153,7 +153,12 @@ async def get_user(username: str):
         raise HTTPException(status_code=500, detail=f"Failed to fetch user: {str(e)}")
 
 @api_router.post("/upload", response_model=FileResponse)
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    file: UploadFile = File(...),
+    owner_id: Optional[str] = None,
+    owner_username: Optional[str] = None,
+    is_public: bool = True
+):
     try:
         # Generate unique file ID
         file_id = str(uuid.uuid4())
@@ -174,7 +179,10 @@ async def upload_file(file: UploadFile = File(...)):
             filename=stored_filename,
             original_filename=file.filename,
             size=file_size,
-            content_type=file.content_type
+            content_type=file.content_type,
+            owner_id=owner_id,
+            owner_username=owner_username,
+            is_public=is_public
         )
         
         # Save metadata to MongoDB
@@ -191,7 +199,9 @@ async def upload_file(file: UploadFile = File(...)):
             content_type=file.content_type,
             upload_date=doc['upload_date'],
             download_url=f"/api/files/{file_id}/download",
-            share_url=f"/api/files/{file_id}/download"
+            share_url=f"/api/files/{file_id}/download",
+            owner_username=owner_username,
+            is_public=is_public
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
