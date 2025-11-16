@@ -1,7 +1,9 @@
 import { useEffect, useState, useRef } from "react";
 import "@/App.css";
 import axios from "axios";
-import { Upload, Download, Trash2, Copy, File, CheckCircle } from "lucide-react";
+import { Upload, Download, Trash2, Share2, File, X } from "lucide-react";
+import ShareModal from "@/components/ShareModal";
+import ProgressBar from "@/components/ProgressBar";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -10,8 +12,15 @@ function App() {
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
-  const [copiedId, setCopiedId] = useState(null);
   const fileInputRef = useRef(null);
+  
+  // Share modal state
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  
+  // Progress tracking state
+  const [uploadProgress, setUploadProgress] = useState(null);
+  const [downloadProgress, setDownloadProgress] = useState(null);
 
   // Fetch all files
   const fetchFiles = async () => {
