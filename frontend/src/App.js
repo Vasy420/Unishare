@@ -221,7 +221,7 @@ function App() {
 
         {/* Upload Area */}
         <div
-          className={`mb-8 border-2 border-dashed rounded-xl p-12 text-center transition-all ${
+          className={`mb-6 md:mb-8 border-2 border-dashed rounded-xl p-6 md:p-12 text-center transition-all ${
             dragActive
               ? "border-purple-400 bg-purple-900/20"
               : "border-gray-600 bg-slate-800/50 hover:border-purple-500"
@@ -232,11 +232,11 @@ function App() {
           onDrop={handleDrop}
           data-testid="upload-area"
         >
-          <Upload className="w-16 h-16 mx-auto mb-4 text-purple-400" />
-          <h3 className="text-xl font-semibold text-white mb-2">
+          <Upload className="w-12 h-12 md:w-16 md:h-16 mx-auto mb-3 md:mb-4 text-purple-400" />
+          <h3 className="text-lg md:text-xl font-semibold text-white mb-2">
             {uploading ? "Uploading..." : "Drop your file here"}
           </h3>
-          <p className="text-gray-400 mb-4">or</p>
+          <p className="text-gray-400 mb-3 md:mb-4 text-sm md:text-base">or</p>
           <input
             ref={fileInputRef}
             type="file"
@@ -247,7 +247,7 @@ function App() {
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
-            className="px-6 py-3 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 md:px-6 py-2 md:py-3 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm md:text-base"
             data-testid="browse-button"
           >
             {uploading ? "Uploading..." : "Browse Files"}
