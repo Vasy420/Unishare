@@ -403,6 +403,122 @@ async def get_me(current_user: User = Depends(get_current_user)):
         created_date=current_user.created_date.isoformat()
     )
 
+@api_router.get("/auth/google")
+async def google_auth():
+    """Initiate Google OAuth flow for login/signup"""
+    try:
+        client_id = os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+        redirect_uri = f"{os.getenv('REACT_APP_BACKEND_URL', os.getenv('FRONTEND_URL', ''))}/api/auth/google/callback"
+        
+        if not client_id or not client_secret:
+            raise HTTPException(
+                status_code=500,
+                detail="Google OAuth not configured"
+            )
+        
+        flow = Flow.from_client_config(
+            {
+                "web": {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": [redirect_uri]
+                }
+            },
+            scopes=[
+                'openid',
+                'https://www.googleapis.com/auth/userinfo.email',
+                'https://www.googleapis.com/auth/userinfo.profile'
+            ],
+            redirect_uri=redirect_uri
+        )
+        
+        authorization_url, state = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true',
+            prompt='consent'
+        )
+        
+        logger.info(f"Google OAuth initiated")
+        return {"authorization_url": authorization_url, "state": state}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to initiate Google OAuth: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to initiate Google OAuth: {str(e)}")
+
+@api_router.get("/auth/google/callback")
+async def google_auth_callback(code: str = Query(...), state: str = Query(None)):
+    """Handle Google OAuth callback for login/signup"""
+    try:
+        client_id = os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+        redirect_uri = f"{os.getenv('REACT_APP_BACKEND_URL', os.getenv('FRONTEND_URL', ''))}/api/auth/google/callback"
+        frontend_url = os.getenv('FRONTEND_URL', os.getenv('REACT_APP_BACKEND_URL', ''))
+        
+        flow = Flow.from_client_config(
+            {
+                "web": {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": [redirect_uri]
+                }
+            },
+            scopes=None,
+            redirect_uri=redirect_uri
+        )
+        
+        flow.fetch_token(code=code)
+        credentials = flow.credentials
+        
+        # Get user info from Google
+        import requests
+        userinfo_response = requests.get(
+            'https://www.googleapis.com/oauth2/v2/userinfo',
+            headers={'Authorization': f'Bearer {credentials.token}'}
+        )
+        userinfo = userinfo_response.json()
+        
+        google_id = userinfo.get('id')
+        email = userinfo.get('email')
+        name = userinfo.get('name', email.split('@')[0])
+        
+        # Check if user exists
+        user_doc = await db.users.find_one({"email": email}, {"_id": 0})
+        
+        if user_doc:
+            # Existing user - login
+            user = User(**user_doc)
+        else:
+            # New user - register
+            user = User(
+                username=name,
+                email=email,
+                is_guest=False,
+                emoji="👤",
+                google_id=google_id
+            )
+            
+            doc = user.model_dump()
+            doc['created_date'] = doc['created_date'].isoformat()
+            await db.users.insert_one(doc)
+        
+        # Create access token
+        access_token = create_access_token(data={"sub": user.id})
+        
+        # Redirect to frontend with token
+        return RedirectResponse(url=f"{frontend_url}?google_auth=success&token={access_token}&user_id={user.id}&google_drive_prompt=true")
+    
+    except Exception as e:
+        logger.error(f"Google OAuth callback failed: {e}")
+        frontend_url = os.getenv('FRONTEND_URL', os.getenv('REACT_APP_BACKEND_URL', ''))
+        return RedirectResponse(url=f"{frontend_url}?google_auth=error&error={str(e)}")
+
 # ============================================================================
 # File Management Routes
 # ============================================================================
