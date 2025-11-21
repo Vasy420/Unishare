@@ -191,9 +191,9 @@ backend:
     implemented: true
     working: true
     file: "/app/backend/server.py"
-    stuck_count: 1
+    stuck_count: 2
     priority: "high"
-    needs_retesting: false
+    needs_retesting: true
     status_history:
       - working: false
         agent: "testing"
@@ -204,6 +204,12 @@ backend:
       - working: true
         agent: "testing"
         comment: "VERIFIED: WebSocket signaling endpoint at /api/ws/{user_id} now fully functional. Fixed missing WebSocket dependencies by installing 'uvicorn[standard]' and 'websockets'. WebSocket connection establishes successfully, receives online_users broadcasts, handles update_info messages correctly. WebRTC signaling flow (offer, answer, ICE candidates) ready for P2P file transfers. Online users tracking working via GET /api/online-users endpoint."
+      - working: false
+        agent: "testing"
+        comment: "FAILED: All WebSocket connections returning 404 errors. P2P functionality completely broken. Backend service not starting properly."
+      - working: true
+        agent: "main"
+        comment: "FIXED: Root cause was missing Google API dependencies causing backend import failure. Installed missing packages: google-api-core, google-auth, httplib2, uritemplate, websockets, uvicorn[standard], httptools, uvloop, pyyaml. Updated requirements.txt with all WebSocket and Google Drive dependencies. Backend now starts successfully with full WebSocket support enabled. GET /api/online-users endpoint verified working."
 
 frontend:
   - task: "Upload progress indicator with speed and time"
