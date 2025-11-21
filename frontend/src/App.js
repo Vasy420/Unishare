@@ -10,6 +10,8 @@ import FileCard from './components/FileCard';
 import ProgressIndicator from './components/ProgressIndicator';
 import ShareModal2 from './components/ShareModal2';
 import GoogleDrivePicker from './components/GoogleDrivePicker';
+import WelcomeScreen from './components/WelcomeScreen';
+import GoogleDriveConnectModal from './components/GoogleDriveConnectModal';
 import webrtcManager from './utils/webrtcManager2';
 import './App.css';
 
