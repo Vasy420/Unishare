@@ -539,7 +539,7 @@ class UniShareTester:
         try:
             # Generate a test user ID
             test_user_id = str(uuid.uuid4())
-            ws_url = f"{WS_URL}/ws/{test_user_id}"
+            ws_url = f"{WS_URL}/api/ws/{test_user_id}"
             
             print(f"Connecting to WebSocket: {ws_url}")
             
