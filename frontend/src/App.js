@@ -361,7 +361,7 @@ function App() {
                     </button>
                   )}
                   
-                  {!user.google_drive_connected ? (
+                  {driveConfigured && !user.google_drive_connected ? (
                     <button
                       onClick={handleConnectDrive}
                       className="hidden sm:flex items-center space-x-2 px-4 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
@@ -369,7 +369,7 @@ function App() {
                       <HardDrive className="w-4 h-4" />
                       <span className="text-sm">Connect Drive</span>
                     </button>
-                  ) : (
+                  ) : driveConfigured && user.google_drive_connected ? (
                     <button
                       onClick={() => setShowDrivePicker(true)}
                       className="hidden sm:flex items-center space-x-2 px-4 py-2 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
