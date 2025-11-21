@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-UniShare Backend API Testing Script
-Tests authentication, file management, guest limits, and WebSocket signaling
+UniShare6 Backend API Testing Script
+Tests WebSocket signaling, Google Drive integration, and core file operations
+Focus on WebSocket P2P functionality and Google OAuth integration
 """
 
 import requests
@@ -14,6 +15,8 @@ import websocket
 import threading
 import uuid
 from datetime import datetime
+import asyncio
+import ssl
 
 # Get backend URL from frontend .env file
 def get_backend_url():
