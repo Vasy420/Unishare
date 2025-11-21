@@ -56,11 +56,12 @@ const RickrollModal = ({ isOpen, onClose }) => {
           <iframe
             ref={iframeRef}
             className="absolute inset-0 w-full h-full"
-            src="https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0"
+            src="https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1&mute=0&rel=0&controls=1&modestbranding=1&fs=1"
             title="Rick Astley - Never Gonna Give You Up"
             frameBorder="0"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
             allowFullScreen
+            loading="eager"
           />
         </div>
 
