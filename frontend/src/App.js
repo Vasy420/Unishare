@@ -1,56 +1,83 @@
-import React, { useEffect, useState, useRef, useMemo, useCallback } from "react";
-import "@/App.css";
-import axios from "axios";
-import { Upload, Download, Trash2, Share2, File, User, LogOut } from "lucide-react";
-import EnhancedShareModal from "@/components/EnhancedShareModal";
-import ProgressBar from "@/components/ProgressBar";
-import UsernameModal from "@/components/UsernameModal";
-import webrtcManager from "@/utils/webrtcManager";
+import React, { useState, useEffect, useCallback } from 'react';
+import axios from 'axios';
+import { Moon, Sun, LogOut, User, Upload as UploadIcon, HardDrive, History } from 'lucide-react';
+import { useTheme } from './contexts/ThemeContext';
+import { useAuth } from './contexts/AuthContext';
+import GuestModal from './components/GuestModal';
+import AuthModal from './components/AuthModal';
+import UploadZone from './components/UploadZone';
+import FileCard from './components/FileCard';
+import ProgressIndicator from './components/ProgressIndicator';
+import ShareModal2 from './components/ShareModal2';
+import GoogleDrivePicker from './components/GoogleDrivePicker';
+import webrtcManager from './utils/webrtcManager2';
+import './App.css';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
 
+// File history in localStorage
+const HISTORY_KEY = 'unishare_file_history';
+
+const getFileHistory = () => {
+  try {
+    const history = localStorage.getItem(HISTORY_KEY);
+    return history ? JSON.parse(history) : [];
+  } catch {
+    return [];
+  }
+};
+
+const addToFileHistory = (file) => {
+  try {
+    const history = getFileHistory();
+    history.unshift({
+      ...file,
+      timestamp: new Date().toISOString()
+    });
+    // Keep only last 50 files
+    const trimmed = history.slice(0, 50);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
+  } catch (error) {
+    console.error('Failed to save to history:', error);
+  }
+};
+
 function App() {
+  const { theme, toggleTheme } = useTheme();
+  const { user, token, loading: authLoading, loginAsGuest, register, login, logout } = useAuth();
+  
   const [files, setFiles] = useState([]);
-  const [uploading, setUploading] = useState(false);
-  const [dragActive, setDragActive] = useState(false);
-  const fileInputRef = useRef(null);
-  
-  // User state
-  const [currentUser, setCurrentUser] = useState(null);
-  const [allUsers, setAllUsers] = useState([]);
-  const [showUsernameModal, setShowUsernameModal] = useState(false);
-  
-  // Share modal state
-  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [fileHistory, setFileHistory] = useState([]);
+  const [showGuestModal, setShowGuestModal] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [showDrivePicker, setShowDrivePicker] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
-  
-  // Progress tracking state
+  const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(null);
   const [downloadProgress, setDownloadProgress] = useState(null);
+  const [dataLimitReached, setDataLimitReached] = useState(false);
 
+  // Check auth and ask for guest username when needed
   useEffect(() => {
-    // Check for existing user in localStorage
-    const savedUser = localStorage.getItem('fileShareUser');
-    if (savedUser) {
-      const user = JSON.parse(savedUser);
-      setCurrentUser(user);
-      connectWebRTC(user.id);
-    } else {
-      setShowUsernameModal(true);
+    if (!authLoading && !user) {
+      // No user logged in, show guest modal
+      setShowGuestModal(true);
     }
-  }, []);
+  }, [authLoading, user]);
 
+  // Fetch files when user is available
   useEffect(() => {
-    if (currentUser) {
+    if (user) {
       fetchFiles();
-      fetchUsers();
-    }
-  }, [currentUser]);
-
-  const connectWebRTC = (userId) => {
-    try {
-      webrtcManager.connect(userId, BACKEND_URL);
+      loadFileHistory();
+      // Connect to WebRTC
+      webrtcManager.connect(user.id, BACKEND_URL);
+      webrtcManager.updateUserInfo(user.username, user.emoji);
+      
+      // Handle received files via P2P
       webrtcManager.onFileReceived = (filename, blob) => {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -60,133 +87,133 @@ function App() {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        alert(`Received file: ${filename}`);
+        alert(`Received file via P2P: ${filename}`);
       };
-    } catch (error) {
-      console.error('WebRTC connection error:', error);
+    }
+
+    return () => {
+      if (user) {
+        webrtcManager.disconnect();
+      }
+    };
+  }, [user]);
+
+  const loadFileHistory = () => {
+    if (user && user.is_guest) {
+      setFileHistory(getFileHistory());
     }
   };
 
-  const handleUsernameSubmit = async (username) => {
-    try {
-      const response = await axios.post(`${API}/users?username=${username}`);
-      const user = response.data;
-      setCurrentUser(user);
-      localStorage.setItem('fileShareUser', JSON.stringify(user));
-      setShowUsernameModal(false);
-      connectWebRTC(user.id);
-    } catch (error) {
-      console.error('Error creating user:', error);
-      alert('Failed to create user. Please try again.');
-    }
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('fileShareUser');
-    webrtcManager.disconnect();
-    setCurrentUser(null);
-    setShowUsernameModal(true);
-  };
-
-  // Fetch all files
-  const fetchFiles = useCallback(async () => {
-    if (!currentUser) return;
+  const fetchFiles = async () => {
+    if (!user || !token) return;
     
     try {
-      const response = await axios.get(`${API}/files?user_id=${currentUser.id}`);
+      const response = await axios.get(`${API}/files`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       setFiles(response.data);
     } catch (error) {
-      console.error("Error fetching files:", error);
-    }
-  }, [currentUser]);
-
-  // Fetch all users
-  const fetchUsers = async () => {
-    try {
-      const response = await axios.get(`${API}/users`);
-      setAllUsers(response.data);
-    } catch (error) {
-      console.error("Error fetching users:", error);
+      console.error('Failed to fetch files:', error);
     }
   };
 
-  // Handle file upload with progress tracking
-  const handleFileUpload = async (selectedFiles) => {
-    if (!selectedFiles || selectedFiles.length === 0) return;
+  const handleGuestLogin = async (username, emoji) => {
+    const result = await loginAsGuest(username, emoji);
+    if (result.success) {
+      setShowGuestModal(false);
+    } else {
+      alert(result.error);
+    }
+  };
 
-    const file = selectedFiles[0];
+  const handleAuth = async (emailOrUsername, passwordOrEmail, passwordOrMode, mode) => {
+    let result;
+    if (mode === 'register') {
+      result = await register(emailOrUsername, passwordOrEmail, passwordOrMode);
+    } else {
+      result = await login(emailOrUsername, passwordOrEmail);
+    }
+    
+    if (result.success) {
+      setShowAuthModal(false);
+    } else {
+      throw new Error(result.error);
+    }
+  };
+
+  const handleFileUpload = async (file) => {
+    if (!user || !token) {
+      alert('Please log in to upload files');
+      return;
+    }
+
     setUploading(true);
+    setUploadProgress({ progress: 0, speed: 0, timeRemaining: 0, fileName: file.name });
+
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append('file', file);
 
     const startTime = Date.now();
     let lastLoaded = 0;
     let lastTime = startTime;
 
     try {
-      await axios.post(
-        `${API}/upload?owner_id=${currentUser.id}&owner_username=${currentUser.username}&is_public=true`,
-        formData,
-        {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
-          onUploadProgress: (progressEvent) => {
-            const currentTime = Date.now();
-            const timeElapsed = (currentTime - lastTime) / 1000;
-            const loaded = progressEvent.loaded;
-            const total = progressEvent.total;
-            const percentage = Math.round((loaded * 100) / total);
-            
-            const bytesUploaded = loaded - lastLoaded;
-            const speed = timeElapsed > 0 ? bytesUploaded / timeElapsed : 0;
-            
-            const bytesRemaining = total - loaded;
-            const timeRemaining = speed > 0 ? bytesRemaining / speed : 0;
-            
-            setUploadProgress({
-              progress: percentage,
-              speed: speed,
-              timeRemaining: timeRemaining,
-              fileName: file.name,
-            });
-            
-            lastLoaded = loaded;
-            lastTime = currentTime;
-          },
+      await axios.post(`${API}/upload`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          'Authorization': `Bearer ${token}`
+        },
+        onUploadProgress: (progressEvent) => {
+          const currentTime = Date.now();
+          const timeElapsed = (currentTime - lastTime) / 1000;
+          const loaded = progressEvent.loaded;
+          const total = progressEvent.total;
+          const percentage = Math.round((loaded * 100) / total);
+          
+          const bytesUploaded = loaded - lastLoaded;
+          const speed = timeElapsed > 0 ? bytesUploaded / timeElapsed : 0;
+          
+          const bytesRemaining = total - loaded;
+          const timeRemaining = speed > 0 ? bytesRemaining / speed : 0;
+          
+          setUploadProgress({
+            progress: percentage,
+            speed: speed,
+            timeRemaining: timeRemaining,
+            fileName: file.name
+          });
+          
+          lastLoaded = loaded;
+          lastTime = currentTime;
         }
-      );
+      });
+
       await fetchFiles();
       
       setTimeout(() => {
         setUploadProgress(null);
       }, 2000);
+      
+      setDataLimitReached(false);
     } catch (error) {
-      console.error("Error uploading file:", error);
-      alert("Failed to upload file");
+      console.error('Upload failed:', error);
+      if (error.response?.status === 403) {
+        setDataLimitReached(true);
+        alert(error.response?.data?.detail || 'Data limit reached. Please create an account.');
+      } else {
+        alert('Failed to upload file');
+      }
       setUploadProgress(null);
     } finally {
       setUploading(false);
     }
   };
 
-  // Handle file delete
-  const handleDelete = async (fileId) => {
-    if (!window.confirm("Are you sure you want to delete this file?")) return;
-
+  const handleDownload = async (file) => {
     try {
-      await axios.delete(`${API}/files/${fileId}`);
-      await fetchFiles();
-    } catch (error) {
-      console.error("Error deleting file:", error);
-      alert("Failed to delete file");
-    }
-  };
-
-  // Handle file download with progress tracking
-  const handleDownload = async (fileId, filename) => {
-    try {
-      const downloadUrl = `${API}/files/${fileId}/download`;
+      setDownloadProgress({ progress: 0, speed: 0, timeRemaining: 0, fileName: file.original_filename });
+      
+      const downloadUrl = `${BACKEND_URL}${file.download_url}`;
       
       const startTime = Date.now();
       let lastLoaded = 0;
@@ -211,281 +238,332 @@ function App() {
             progress: percentage,
             speed: speed,
             timeRemaining: timeRemaining,
-            fileName: filename,
+            fileName: file.original_filename
           });
           
           lastLoaded = loaded;
           lastTime = currentTime;
-        },
+        }
       });
       
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', filename);
+      link.setAttribute('download', file.original_filename);
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
       
+      // Add to history for guests
+      if (user?.is_guest) {
+        addToFileHistory(file);
+        loadFileHistory();
+      }
+      
       setTimeout(() => {
         setDownloadProgress(null);
       }, 2000);
     } catch (error) {
-      console.error("Error downloading file:", error);
-      alert("Failed to download file");
+      console.error('Download failed:', error);
+      alert('Failed to download file');
       setDownloadProgress(null);
     }
   };
 
-  // Open share modal
+  const handleDelete = async (file) => {
+    if (!window.confirm('Are you sure you want to delete this file?')) return;
+
+    try {
+      await axios.delete(`${API}/files/${file.id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      await fetchFiles();
+    } catch (error) {
+      console.error('Delete failed:', error);
+      alert('Failed to delete file');
+    }
+  };
+
   const handleShare = (file) => {
     setSelectedFile(file);
-    setShareModalOpen(true);
+    setShowShareModal(true);
   };
 
-  // Drag and drop handlers
-  const handleDrag = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true);
-    } else if (e.type === "dragleave") {
-      setDragActive(false);
+  const handleConnectDrive = async () => {
+    try {
+      const response = await axios.get(`${API}/drive/connect`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      window.location.href = response.data.authorization_url;
+    } catch (error) {
+      console.error('Failed to connect Drive:', error);
+      alert(error.response?.data?.detail || 'Failed to connect Google Drive');
     }
   };
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileUpload(e.dataTransfer.files);
-    }
+  const handleLogout = () => {
+    logout();
+    setFiles([]);
+    setFileHistory([]);
+    webrtcManager.disconnect();
   };
 
-  // Format file size
-  const formatFileSize = useCallback((bytes) => {
-    if (bytes === 0) return "0 Bytes";
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + " " + sizes[i];
-  }, []);
-
-  // Format date
-  const formatDate = useCallback((dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString() + " " + date.toLocaleTimeString();
-  }, []);
-
-  const memoizedFiles = useMemo(() => files, [files]);
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600 dark:text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative overflow-hidden">
-      {/* Animated background elements */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-pink-500/10 rounded-full blur-3xl animate-pulse" style={{animationDelay: '1s'}}></div>
-      </div>
-
-      <div className="container mx-auto px-4 py-6 md:py-8 max-w-7xl relative z-10">
-        {/* Header with glassmorphism */}
-        <div className="text-center mb-6 md:mb-8">
-          <div className="inline-block px-8 py-6 rounded-2xl bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl mb-4">
-            <h1 className="text-3xl md:text-5xl font-bold text-white mb-2" data-testid="app-title">
-              <span className="bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-400">
-                File Share Pro
-              </span>
-            </h1>
-            <p className="text-gray-300 text-sm md:text-base">Share files instantly with advanced methods</p>
-          </div>
-
-          {/* User info bar with neumorphism */}
-          {currentUser && (
-            <div className="inline-flex items-center space-x-4 px-6 py-3 rounded-xl bg-gradient-to-r from-slate-800/80 to-purple-800/80 backdrop-blur-md border border-white/10 shadow-xl">
-              <div className="flex items-center space-x-2">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center shadow-lg">
-                  <User className="w-4 h-4 text-white" />
-                </div>
-                <span className="text-white font-medium text-sm md:text-base">{currentUser.username}</span>
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 transition-colors duration-300">
+      {/* Header */}
+      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-40 backdrop-blur-sm bg-white/90 dark:bg-gray-800/90">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center space-x-3">
+              <div className="bg-gradient-to-br from-blue-600 to-blue-700 p-2 rounded-xl">
+                <UploadIcon className="w-6 h-6 text-white" />
               </div>
+              <div>
+                <h1 className="text-xl font-bold text-gray-900 dark:text-white">UniShare</h1>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Fast & Secure File Sharing</p>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-3">
+              {user && (
+                <>
+                  {user.is_guest && (
+                    <button
+                      onClick={() => setShowHistory(!showHistory)}
+                      className="p-2 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                      title="File History"
+                    >
+                      <History className="w-5 h-5" />
+                    </button>
+                  )}
+                  
+                  {!user.google_drive_connected ? (
+                    <button
+                      onClick={handleConnectDrive}
+                      className="hidden sm:flex items-center space-x-2 px-4 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+                    >
+                      <HardDrive className="w-4 h-4" />
+                      <span className="text-sm">Connect Drive</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setShowDrivePicker(true)}
+                      className="hidden sm:flex items-center space-x-2 px-4 py-2 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                    >
+                      <HardDrive className="w-4 h-4" />
+                      <span className="text-sm">Browse Drive</span>
+                    </button>
+                  )}
+
+                  <div className="flex items-center space-x-2 px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg">
+                    <span className="text-xl">{user.emoji}</span>
+                    <span className="text-sm font-medium text-gray-900 dark:text-white">
+                      {user.username}
+                    </span>
+                    {user.is_guest && (
+                      <span className="text-xs px-2 py-0.5 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 rounded">
+                        Guest
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
+
               <button
-                onClick={handleLogout}
-                className="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg transition-all duration-200 text-sm flex items-center space-x-1 border border-red-500/30"
+                onClick={toggleTheme}
+                className="p-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
               >
-                <LogOut className="w-3 h-3" />
-                <span>Logout</span>
+                {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
               </button>
-            </div>
-          )}
-        </div>
 
-        {/* Upload Area with enhanced glassmorphism */}
-        <div
-          className={`mb-6 md:mb-8 border-2 border-dashed rounded-2xl p-6 md:p-12 text-center transition-all duration-300 backdrop-blur-xl shadow-2xl ${
-            dragActive
-              ? "border-purple-400 bg-purple-500/20 scale-[1.02]"
-              : "border-white/20 bg-white/5 hover:border-purple-400/50 hover:bg-white/10"
-          }`}
-          onDragEnter={handleDrag}
-          onDragLeave={handleDrag}
-          onDragOver={handleDrag}
-          onDrop={handleDrop}
-          data-testid="upload-area"
-        >
-          <div className="w-16 h-16 md:w-20 md:h-20 mx-auto mb-4 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center shadow-2xl transform hover:scale-110 transition-transform duration-300">
-            <Upload className="w-8 h-8 md:w-10 md:h-10 text-white" />
-          </div>
-          <h3 className="text-lg md:text-xl font-semibold text-white mb-2">
-            {uploading ? "Uploading..." : "Drop your file here"}
-          </h3>
-          <p className="text-gray-300 mb-3 md:mb-4 text-sm md:text-base">or</p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            onChange={(e) => handleFileUpload(e.target.files)}
-            className="hidden"
-            data-testid="file-input"
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className="px-6 md:px-8 py-3 md:py-4 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-xl font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-2xl hover:shadow-purple-500/50 transform hover:scale-105 text-sm md:text-base"
-            data-testid="browse-button"
-            style={{
-              boxShadow: '0 10px 40px -10px rgba(168, 85, 247, 0.4), inset 0 -2px 10px rgba(0, 0, 0, 0.2)'
-            }}
-          >
-            {uploading ? "Uploading..." : "Browse Files"}
-          </button>
-        </div>
-
-        {/* Files List with enhanced glassmorphism */}
-        <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-4 md:p-6 border border-white/10 shadow-2xl">
-          <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6" data-testid="files-header">
-            My Files ({memoizedFiles.length})
-          </h2>
-          
-          {memoizedFiles.length === 0 ? (
-            <div className="text-center py-12 md:py-16" data-testid="empty-state">
-              <div className="w-20 h-20 md:w-24 md:h-24 mx-auto mb-4 rounded-full bg-gradient-to-r from-slate-700 to-slate-600 flex items-center justify-center shadow-xl">
-                <File className="w-10 h-10 md:w-12 md:h-12 text-gray-400" />
-              </div>
-              <p className="text-gray-300 text-base md:text-lg font-medium">No files uploaded yet</p>
-              <p className="text-gray-400 text-xs md:text-sm mt-2">Upload your first file to get started</p>
-            </div>
-          ) : (
-            <div className="space-y-3" data-testid="files-list">
-              {memoizedFiles.map((file) => (
-                <div
-                  key={file.id}
-                  className="group bg-gradient-to-r from-slate-800/50 to-purple-900/30 backdrop-blur-md rounded-xl p-3 md:p-4 flex flex-col sm:flex-row sm:items-center justify-between border border-white/10 hover:border-purple-400/50 transition-all duration-300 shadow-lg hover:shadow-purple-500/20 transform hover:scale-[1.01]"
-                  data-testid={`file-item-${file.id}`}
-                  style={{
-                    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 4px 20px -4px rgba(0, 0, 0, 0.3)'
-                  }}
+              {user && (
+                <button
+                  onClick={handleLogout}
+                  className="p-2 text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                  title="Logout"
                 >
-                  <div className="flex items-center space-x-3 md:space-x-4 flex-1 min-w-0">
-                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0 shadow-lg">
-                      <File className="w-5 h-5 md:w-6 md:h-6 text-white" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-white font-medium truncate text-sm md:text-base" data-testid={`filename-${file.id}`}>
-                        {file.original_filename}
-                      </h3>
-                      <div className="flex items-center flex-wrap gap-2 text-xs md:text-sm text-gray-400 mt-1">
-                        <span data-testid={`filesize-${file.id}`}>{formatFileSize(file.size)}</span>
-                        {file.owner_username && (
-                          <>
-                            <span className="hidden sm:inline">•</span>
-                            <span className="text-purple-400">by {file.owner_username}</span>
-                          </>
-                        )}
-                        <span className="hidden sm:inline">•</span>
-                        <span data-testid={`filedate-${file.id}`} className="hidden sm:inline">{formatDate(file.upload_date)}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center space-x-2 flex-shrink-0 self-end sm:self-auto mt-3 sm:mt-0">
-                    <button
-                      onClick={() => handleDownload(file.id, file.original_filename)}
-                      className="p-2 md:p-2.5 bg-blue-600/80 hover:bg-blue-600 text-white rounded-lg transition-all duration-200 shadow-lg hover:shadow-blue-500/50 transform hover:scale-110"
-                      title="Download"
-                      data-testid={`download-button-${file.id}`}
-                      style={{
-                        boxShadow: '0 4px 15px -2px rgba(37, 99, 235, 0.4), inset 0 -2px 5px rgba(0, 0, 0, 0.2)'
-                      }}
-                    >
-                      <Download className="w-4 h-4 md:w-5 md:h-5" />
-                    </button>
-                    <button
-                      onClick={() => handleShare(file)}
-                      className="p-2 md:p-2.5 bg-green-600/80 hover:bg-green-600 text-white rounded-lg transition-all duration-200 shadow-lg hover:shadow-green-500/50 transform hover:scale-110"
-                      title="Share"
-                      data-testid={`share-button-${file.id}`}
-                      style={{
-                        boxShadow: '0 4px 15px -2px rgba(34, 197, 94, 0.4), inset 0 -2px 5px rgba(0, 0, 0, 0.2)'
-                      }}
-                    >
-                      <Share2 className="w-4 h-4 md:w-5 md:h-5" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(file.id)}
-                      className="p-2 md:p-2.5 bg-red-600/80 hover:bg-red-600 text-white rounded-lg transition-all duration-200 shadow-lg hover:shadow-red-500/50 transform hover:scale-110"
-                      title="Delete"
-                      data-testid={`delete-button-${file.id}`}
-                      style={{
-                        boxShadow: '0 4px 15px -2px rgba(239, 68, 68, 0.4), inset 0 -2px 5px rgba(0, 0, 0, 0.2)'
-                      }}
-                    >
-                      <Trash2 className="w-4 h-4 md:w-5 md:h-5" />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                  <LogOut className="w-5 h-5" />
+                </button>
+              )}
             </div>
-          )}
+          </div>
         </div>
-      </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {user && (
+          <>
+            {/* Data Limit Warning */}
+            {user.is_guest && user.total_data_shared > GUEST_DATA_LIMIT * 0.8 && (
+              <div className="mb-6 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
+                      You've used {((user.total_data_shared / GUEST_DATA_LIMIT) * 100).toFixed(0)}% of your 2GB guest limit
+                    </p>
+                    <p className="text-xs text-yellow-700 dark:text-yellow-300 mt-1">
+                      Create an account to get unlimited storage!
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowAuthModal(true)}
+                    className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white text-sm font-medium rounded-lg transition-colors"
+                  >
+                    Upgrade Now
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Upload Zone */}
+            <div className="mb-8">
+              <UploadZone
+                onFileSelect={handleFileUpload}
+                uploading={uploading}
+                disabled={dataLimitReached}
+              />
+              {dataLimitReached && (
+                <div className="mt-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 text-center">
+                  <p className="text-sm text-red-800 dark:text-red-200 font-medium">
+                    2GB limit reached for guests
+                  </p>
+                  <button
+                    onClick={() => setShowAuthModal(true)}
+                    className="mt-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors"
+                  >
+                    Create Account for Unlimited Storage
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* File History for Guests */}
+            {user.is_guest && showHistory && fileHistory.length > 0 && (
+              <div className="mb-8">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                  Recent Files (Stored Locally)
+                </h2>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {fileHistory.slice(0, 6).map((file, idx) => (
+                    <FileCard
+                      key={`history-${idx}`}
+                      file={file}
+                      onDownload={handleDownload}
+                      onDelete={() => {}}
+                      onShare={handleShare}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Files Grid */}
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  {user.is_guest ? 'Your Shared Files' : 'My Files'}
+                </h2>
+                {user.is_guest && (
+                  <button
+                    onClick={() => setShowAuthModal(true)}
+                    className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    Login to access everywhere
+                  </button>
+                )}
+              </div>
+
+              {files.length === 0 ? (
+                <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+                  <UploadIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                  <p className="text-gray-600 dark:text-gray-400">No files yet</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-500 mt-1">
+                    Upload your first file to get started
+                  </p>
+                </div>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {files.map((file) => (
+                    <FileCard
+                      key={file.id}
+                      file={file}
+                      onDownload={handleDownload}
+                      onDelete={handleDelete}
+                      onShare={handleShare}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </main>
 
       {/* Progress Indicators */}
       {uploadProgress && (
-        <ProgressBar
+        <ProgressIndicator
+          type="upload"
+          fileName={uploadProgress.fileName}
           progress={uploadProgress.progress}
           speed={uploadProgress.speed}
           timeRemaining={uploadProgress.timeRemaining}
-          fileName={uploadProgress.fileName}
-          operation="Uploading"
         />
       )}
-      
+
       {downloadProgress && (
-        <ProgressBar
+        <ProgressIndicator
+          type="download"
+          fileName={downloadProgress.fileName}
           progress={downloadProgress.progress}
           speed={downloadProgress.speed}
           timeRemaining={downloadProgress.timeRemaining}
-          fileName={downloadProgress.fileName}
-          operation="Downloading"
         />
       )}
 
-      {/* Username Modal */}
-      <UsernameModal
-        isOpen={showUsernameModal}
-        onSubmit={handleUsernameSubmit}
+      {/* Modals */}
+      <GuestModal
+        isOpen={showGuestModal && !user}
+        onClose={() => {}}
+        onSubmit={handleGuestLogin}
       />
 
-      {/* Share Modal */}
-      {selectedFile && currentUser && (
-        <EnhancedShareModal
-          isOpen={shareModalOpen}
-          onClose={() => setShareModalOpen(false)}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onSuccess={handleAuth}
+      />
+
+      {selectedFile && (
+        <ShareModal2
+          isOpen={showShareModal}
+          onClose={() => setShowShareModal(false)}
           file={selectedFile}
-          shareUrl={`${BACKEND_URL}/api/files/${selectedFile.id}/download`}
-          currentUser={currentUser}
-          allUsers={allUsers}
+          backendUrl={BACKEND_URL}
+        />
+      )}
+
+      {user && user.google_drive_connected && (
+        <GoogleDrivePicker
+          isOpen={showDrivePicker}
+          onClose={() => setShowDrivePicker(false)}
+          onFileShared={(file) => {
+            setShowDrivePicker(false);
+            fetchFiles();
+          }}
+          token={token}
         />
       )}
     </div>
