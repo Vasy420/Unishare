@@ -75,58 +75,200 @@ class UniShareTester:
         """Get authorization headers for API requests"""
         return {"Authorization": f"Bearer {token}"} if token else {}
     
-    def test_upload_api(self):
-        """Test POST /api/upload endpoint"""
-        print("\n=== Testing File Upload API ===")
+    def test_guest_creation(self):
+        """Test POST /api/auth/guest endpoint"""
+        print("\n=== Testing Guest User Creation ===")
         
         try:
-            # Create test file
-            test_file_path = self.create_test_file("upload_test.txt", "Hello from backend test!")
+            guest_data = {
+                "username": f"TestGuest_{int(time.time())}",
+                "emoji": "🧪"
+            }
             
-            with open(test_file_path, 'rb') as f:
-                files = {'file': ('upload_test.txt', f, 'text/plain')}
-                response = requests.post(f"{BASE_URL}/upload", files=files, timeout=30)
+            response = requests.post(f"{BASE_URL}/auth/guest", json=guest_data, timeout=30)
             
-            print(f"Upload Response Status: {response.status_code}")
-            print(f"Upload Response: {response.text}")
+            print(f"Guest Creation Response Status: {response.status_code}")
             
             if response.status_code == 200:
                 data = response.json()
                 
                 # Verify response structure
-                required_fields = ['id', 'filename', 'original_filename', 'size', 'upload_date', 'download_url', 'share_url']
+                required_fields = ['access_token', 'token_type', 'user']
                 missing_fields = [field for field in required_fields if field not in data]
                 
                 if missing_fields:
                     raise Exception(f"Missing fields in response: {missing_fields}")
                 
-                # Verify file metadata
-                if data['original_filename'] != 'upload_test.txt':
-                    raise Exception(f"Original filename mismatch: expected 'upload_test.txt', got '{data['original_filename']}'")
+                # Verify user data
+                user = data['user']
+                if user['username'] != guest_data['username']:
+                    raise Exception(f"Username mismatch: expected {guest_data['username']}, got {user['username']}")
                 
-                if data['size'] <= 0:
-                    raise Exception(f"Invalid file size: {data['size']}")
+                if user['emoji'] != guest_data['emoji']:
+                    raise Exception(f"Emoji mismatch: expected {guest_data['emoji']}, got {user['emoji']}")
                 
-                # Store uploaded file info for later tests
-                self.uploaded_files.append(data)
+                if not user['is_guest']:
+                    raise Exception("User should be marked as guest")
                 
-                print("✅ Upload API test PASSED")
-                print(f"   - File ID: {data['id']}")
-                print(f"   - Original filename: {data['original_filename']}")
-                print(f"   - Size: {data['size']} bytes")
-                print(f"   - Download URL: {data['download_url']}")
+                # Store guest info for later tests
+                self.guest_token = data['access_token']
+                self.guest_user = user
                 
-                self.test_results["upload"]["passed"] = True
+                print("✅ Guest Creation test PASSED")
+                print(f"   - Username: {user['username']}")
+                print(f"   - Emoji: {user['emoji']}")
+                print(f"   - Is Guest: {user['is_guest']}")
+                print(f"   - Token: {data['access_token'][:20]}...")
+                
+                self.test_results["guest_creation"]["passed"] = True
                 
             else:
-                raise Exception(f"Upload failed with status {response.status_code}: {response.text}")
+                raise Exception(f"Guest creation failed with status {response.status_code}: {response.text}")
                 
-            # Clean up temp file
-            os.unlink(test_file_path)
-            
         except Exception as e:
-            print(f"❌ Upload API test FAILED: {str(e)}")
-            self.test_results["upload"]["error"] = str(e)
+            print(f"❌ Guest Creation test FAILED: {str(e)}")
+            self.test_results["guest_creation"]["error"] = str(e)
+    
+    def test_user_registration(self):
+        """Test POST /api/auth/register endpoint"""
+        print("\n=== Testing User Registration ===")
+        
+        try:
+            timestamp = int(time.time())
+            user_data = {
+                "username": f"TestUser_{timestamp}",
+                "email": f"testuser_{timestamp}@example.com",
+                "password": "SecurePassword123!"
+            }
+            
+            response = requests.post(f"{BASE_URL}/auth/register", json=user_data, timeout=30)
+            
+            print(f"Registration Response Status: {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Verify response structure
+                required_fields = ['access_token', 'token_type', 'user']
+                missing_fields = [field for field in required_fields if field not in data]
+                
+                if missing_fields:
+                    raise Exception(f"Missing fields in response: {missing_fields}")
+                
+                # Verify user data
+                user = data['user']
+                if user['username'] != user_data['username']:
+                    raise Exception(f"Username mismatch: expected {user_data['username']}, got {user['username']}")
+                
+                if user['email'] != user_data['email']:
+                    raise Exception(f"Email mismatch: expected {user_data['email']}, got {user['email']}")
+                
+                if user['is_guest']:
+                    raise Exception("User should not be marked as guest")
+                
+                # Store user info for later tests
+                self.user_token = data['access_token']
+                self.registered_user = user
+                
+                print("✅ User Registration test PASSED")
+                print(f"   - Username: {user['username']}")
+                print(f"   - Email: {user['email']}")
+                print(f"   - Is Guest: {user['is_guest']}")
+                
+                self.test_results["user_registration"]["passed"] = True
+                
+            else:
+                raise Exception(f"Registration failed with status {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            print(f"❌ User Registration test FAILED: {str(e)}")
+            self.test_results["user_registration"]["error"] = str(e)
+    
+    def test_user_login(self):
+        """Test POST /api/auth/login endpoint"""
+        print("\n=== Testing User Login ===")
+        
+        if not self.registered_user:
+            print("❌ User Login test SKIPPED: No registered user available")
+            self.test_results["user_login"]["error"] = "No registered user available"
+            return
+        
+        try:
+            login_data = {
+                "email": self.registered_user['email'],
+                "password": "SecurePassword123!"
+            }
+            
+            response = requests.post(f"{BASE_URL}/auth/login", json=login_data, timeout=30)
+            
+            print(f"Login Response Status: {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Verify response structure
+                required_fields = ['access_token', 'token_type', 'user']
+                missing_fields = [field for field in required_fields if field not in data]
+                
+                if missing_fields:
+                    raise Exception(f"Missing fields in response: {missing_fields}")
+                
+                # Verify user data matches registration
+                user = data['user']
+                if user['id'] != self.registered_user['id']:
+                    raise Exception(f"User ID mismatch after login")
+                
+                print("✅ User Login test PASSED")
+                print(f"   - User ID: {user['id']}")
+                print(f"   - Username: {user['username']}")
+                
+                self.test_results["user_login"]["passed"] = True
+                
+            else:
+                raise Exception(f"Login failed with status {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            print(f"❌ User Login test FAILED: {str(e)}")
+            self.test_results["user_login"]["error"] = str(e)
+    
+    def test_get_me(self):
+        """Test GET /api/auth/me endpoint"""
+        print("\n=== Testing Get Current User ===")
+        
+        if not self.guest_token:
+            print("❌ Get Me test SKIPPED: No authentication token available")
+            self.test_results["get_me"]["error"] = "No authentication token available"
+            return
+        
+        try:
+            headers = self.get_auth_headers(self.guest_token)
+            response = requests.get(f"{BASE_URL}/auth/me", headers=headers, timeout=30)
+            
+            print(f"Get Me Response Status: {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Verify response matches guest user
+                if data['id'] != self.guest_user['id']:
+                    raise Exception(f"User ID mismatch: expected {self.guest_user['id']}, got {data['id']}")
+                
+                if data['username'] != self.guest_user['username']:
+                    raise Exception(f"Username mismatch: expected {self.guest_user['username']}, got {data['username']}")
+                
+                print("✅ Get Me test PASSED")
+                print(f"   - User ID: {data['id']}")
+                print(f"   - Username: {data['username']}")
+                print(f"   - Is Guest: {data['is_guest']}")
+                
+                self.test_results["get_me"]["passed"] = True
+                
+            else:
+                raise Exception(f"Get Me failed with status {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            print(f"❌ Get Me test FAILED: {str(e)}")
+            self.test_results["get_me"]["error"] = str(e)
     
     def test_list_files_api(self):
         """Test GET /api/files endpoint"""
