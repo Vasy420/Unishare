@@ -796,7 +796,10 @@ async def connect_drive(current_user: User = Depends(get_current_user)):
                     "redirect_uris": [redirect_uri]
                 }
             },
-            scopes=['https://www.googleapis.com/auth/drive.readonly'],
+            scopes=[
+                'https://www.googleapis.com/auth/drive.file',
+                'https://www.googleapis.com/auth/drive.readonly'
+            ],
             redirect_uri=redirect_uri
         )
         
