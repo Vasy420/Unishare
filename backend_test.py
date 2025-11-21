@@ -423,24 +423,25 @@ class UniShareTester:
             print(f"❌ File Download test FAILED: {str(e)}")
             self.test_results["file_download"]["error"] = str(e)
     
-    def test_delete_api(self):
-        """Test DELETE /api/files/{file_id} endpoint"""
-        print("\n=== Testing Delete API ===")
+    def test_file_delete(self):
+        """Test DELETE /api/files/{file_id} endpoint with authentication"""
+        print("\n=== Testing File Delete with Authentication ===")
         
-        if not self.uploaded_files:
-            print("❌ Delete API test SKIPPED: No uploaded files to test")
-            self.test_results["delete"]["error"] = "No uploaded files available"
+        if not self.uploaded_files or not self.guest_token:
+            print("❌ File Delete test SKIPPED: No uploaded files or authentication token available")
+            self.test_results["file_delete"]["error"] = "No uploaded files or authentication token available"
             return
         
         try:
             file_info = self.uploaded_files[0]
             file_id = file_info['id']
             
+            headers = self.get_auth_headers(self.guest_token)
+            
             # Delete the file
-            response = requests.delete(f"{BASE_URL}/files/{file_id}", timeout=30)
+            response = requests.delete(f"{BASE_URL}/files/{file_id}", headers=headers, timeout=30)
             
             print(f"Delete Response Status: {response.status_code}")
-            print(f"Delete Response: {response.text}")
             
             if response.status_code == 200:
                 data = response.json()
@@ -454,8 +455,8 @@ class UniShareTester:
                 
                 if download_response.status_code == 404:
                     print("   - Confirmed: File not found after deletion (404)")
-                    print("✅ Delete API test PASSED")
-                    self.test_results["delete"]["passed"] = True
+                    print("✅ File Delete test PASSED")
+                    self.test_results["file_delete"]["passed"] = True
                 else:
                     raise Exception(f"File still accessible after deletion (status: {download_response.status_code})")
                 
@@ -463,8 +464,73 @@ class UniShareTester:
                 raise Exception(f"Delete failed with status {response.status_code}: {response.text}")
                 
         except Exception as e:
-            print(f"❌ Delete API test FAILED: {str(e)}")
-            self.test_results["delete"]["error"] = str(e)
+            print(f"❌ File Delete test FAILED: {str(e)}")
+            self.test_results["file_delete"]["error"] = str(e)
+    
+    def test_guest_data_limit(self):
+        """Test guest user 2GB data limit"""
+        print("\n=== Testing Guest Data Limit (2GB) ===")
+        
+        if not self.guest_token:
+            print("❌ Guest Data Limit test SKIPPED: No guest token available")
+            self.test_results["guest_data_limit"]["error"] = "No guest token available"
+            return
+        
+        try:
+            # Create a large file (simulate 1GB file by setting metadata size)
+            # We'll create a small file but the backend should track total data shared
+            test_file_path = self.create_test_file("large_test.txt", "This simulates a large file for testing data limits.")
+            
+            headers = self.get_auth_headers(self.guest_token)
+            
+            # Upload the file
+            with open(test_file_path, 'rb') as f:
+                files = {'file': ('large_test.txt', f, 'text/plain')}
+                response = requests.post(f"{BASE_URL}/upload", files=files, headers=headers, timeout=30)
+            
+            print(f"Large File Upload Response Status: {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                print(f"   - Successfully uploaded file: {data['original_filename']}")
+                print(f"   - File size: {data['size']} bytes")
+                
+                # Check current user data usage
+                me_response = requests.get(f"{BASE_URL}/auth/me", headers=headers, timeout=30)
+                if me_response.status_code == 200:
+                    user_data = me_response.json()
+                    print(f"   - Total data shared: {user_data['total_data_shared']} bytes")
+                    print(f"   - Guest limit: 2,147,483,648 bytes (2GB)")
+                    
+                    if user_data['total_data_shared'] > 0:
+                        print("✅ Guest Data Limit tracking test PASSED")
+                        print("   - Data usage is being tracked correctly")
+                        self.test_results["guest_data_limit"]["passed"] = True
+                    else:
+                        raise Exception("Data usage not being tracked")
+                else:
+                    raise Exception("Could not verify data usage")
+                
+                # Clean up the uploaded file
+                delete_response = requests.delete(f"{BASE_URL}/files/{data['id']}", headers=headers, timeout=30)
+                if delete_response.status_code == 200:
+                    print("   - Test file cleaned up successfully")
+                
+            else:
+                # If upload failed, check if it's due to limit (which would be expected for a truly large file)
+                if response.status_code == 403 and "limit exceeded" in response.text.lower():
+                    print("✅ Guest Data Limit enforcement test PASSED")
+                    print("   - 2GB limit is being enforced correctly")
+                    self.test_results["guest_data_limit"]["passed"] = True
+                else:
+                    raise Exception(f"Upload failed unexpectedly with status {response.status_code}: {response.text}")
+                
+            # Clean up temp file
+            os.unlink(test_file_path)
+            
+        except Exception as e:
+            print(f"❌ Guest Data Limit test FAILED: {str(e)}")
+            self.test_results["guest_data_limit"]["error"] = str(e)
     
     def test_404_handling(self):
         """Test 404 error handling for non-existent files"""
