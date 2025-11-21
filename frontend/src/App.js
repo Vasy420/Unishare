@@ -360,6 +360,47 @@ function App() {
     }
   };
 
+  const handleWelcomeGetStarted = () => {
+    localStorage.setItem('unishare_has_visited', 'true');
+    setShowWelcome(false);
+  };
+
+  const handleDriveConnectNow = async () => {
+    setShowDriveConnectModal(false);
+    await handleConnectDrive();
+  };
+
+  const handleDriveConnectSkip = () => {
+    setShowDriveConnectModal(false);
+  };
+
+  const handleSaveToDrive = async (file) => {
+    if (!user || !token) {
+      alert('Please log in to save to Drive');
+      return;
+    }
+
+    if (!user.google_drive_connected) {
+      alert('Please connect your Google Drive first');
+      return;
+    }
+
+    try {
+      const response = await axios.post(
+        `${API}/drive/save/${file.id}`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      if (response.data.success) {
+        alert(`File saved to Google Drive! ${response.data.drive_link}`);
+      }
+    } catch (error) {
+      console.error('Failed to save to Drive:', error);
+      alert(error.response?.data?.detail || 'Failed to save file to Google Drive');
+    }
+  };
+
   const handleLogout = () => {
     logout();
     setFiles([]);
