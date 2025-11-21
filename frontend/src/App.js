@@ -68,13 +68,55 @@ function App() {
   const [showWelcome, setShowWelcome] = useState(false);
   const [showDriveConnectModal, setShowDriveConnectModal] = useState(false);
 
+  // Check if it's first visit
+  useEffect(() => {
+    const hasVisited = localStorage.getItem('unishare_has_visited');
+    if (!hasVisited) {
+      setShowWelcome(true);
+    }
+  }, []);
+
+  // Handle Google OAuth callback
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const googleAuth = urlParams.get('google_auth');
+    const tokenParam = urlParams.get('token');
+    const googleDrivePrompt = urlParams.get('google_drive_prompt');
+    
+    if (googleAuth === 'success' && tokenParam) {
+      // Save token and fetch user info
+      localStorage.setItem('token', tokenParam);
+      setToken(tokenParam);
+      
+      // Fetch user info
+      axios.get(`${API}/auth/me`, {
+        headers: { Authorization: `Bearer ${tokenParam}` }
+      }).then(response => {
+        setUser(response.data);
+        
+        // Show Google Drive connection prompt if needed
+        if (googleDrivePrompt === 'true' && !response.data.google_drive_connected) {
+          setShowDriveConnectModal(true);
+        }
+      }).catch(error => {
+        console.error('Failed to fetch user info:', error);
+      });
+      
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (googleAuth === 'error') {
+      alert('Google authentication failed. Please try again.');
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
   // Check auth and ask for guest username when needed
   useEffect(() => {
-    if (!authLoading && !user) {
+    if (!authLoading && !user && !showWelcome) {
       // No user logged in, show guest modal
       setShowGuestModal(true);
     }
-  }, [authLoading, user]);
+  }, [authLoading, user, showWelcome]);
 
   // Fetch files when user is available
   useEffect(() => {
