@@ -574,6 +574,8 @@ function App() {
                       onDownload={handleDownload}
                       onDelete={() => {}}
                       onShare={handleShare}
+                      onSaveToDrive={handleSaveToDrive}
+                      user={user}
                     />
                   ))}
                 </div>
