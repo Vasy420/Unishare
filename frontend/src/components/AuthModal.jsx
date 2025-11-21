@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
 import { X, Mail, Lock, User } from 'lucide-react';
+import axios from 'axios';
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
+const API = `${BACKEND_URL}/api`;
 
 const AuthModal = ({ isOpen, onClose, onSuccess, mode: initialMode = 'login' }) => {
   const [mode, setMode] = useState(initialMode);
@@ -28,6 +32,20 @@ const AuthModal = ({ isOpen, onClose, onSuccess, mode: initialMode = 'login' }) 
     } catch (err) {
       setError(err.message || 'Authentication failed');
     } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleAuth = async () => {
+    try {
+      setLoading(true);
+      const response = await axios.get(`${API}/auth/google`);
+      const { authorization_url } = response.data;
+      
+      // Redirect to Google OAuth
+      window.location.href = authorization_url;
+    } catch (err) {
+      setError('Failed to initiate Google login');
       setLoading(false);
     }
   };
