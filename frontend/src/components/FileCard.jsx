@@ -57,6 +57,18 @@ const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, user }) 
           <Share2 className="w-4 h-4" />
           <span>Share</span>
         </button>
+        
+        {/* Save to Drive button - show only if user has Drive connected and file is not already on Drive */}
+        {user && user.google_drive_connected && file.source !== 'google_drive' && onSaveToDrive && (
+          <button
+            onClick={() => onSaveToDrive(file)}
+            className="bg-green-50 hover:bg-green-100 dark:bg-green-900/20 dark:hover:bg-green-900/40 text-green-600 dark:text-green-400 p-2 rounded-lg transition-colors duration-200"
+            title="Save to Google Drive"
+          >
+            <CloudUpload className="w-4 h-4" />
+          </button>
+        )}
+        
         <button
           onClick={() => onDownload(file)}
           className="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 p-2 rounded-lg transition-colors duration-200"
