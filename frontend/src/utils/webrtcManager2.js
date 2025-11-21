@@ -124,17 +124,19 @@ class WebRTCManager {
 
   setupDataChannel(peerId, dataChannel) {
     this.dataChannels.set(peerId, dataChannel);
+    console.log(`Setting up data channel with ${peerId}, readyState:`, dataChannel.readyState);
 
     dataChannel.onopen = () => {
-      console.log(`Data channel open with ${peerId}`);
+      console.log(`✅ Data channel OPEN with ${peerId}`);
     };
 
     dataChannel.onclose = () => {
-      console.log(`Data channel closed with ${peerId}`);
+      console.log(`❌ Data channel CLOSED with ${peerId}`);
+      this.dataChannels.delete(peerId);
     };
 
     dataChannel.onerror = (error) => {
-      console.error(`Data channel error with ${peerId}:`, error);
+      console.error(`❌ Data channel ERROR with ${peerId}:`, error);
     };
 
     dataChannel.onmessage = (event) => {
