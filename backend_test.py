@@ -44,23 +44,23 @@ class UniShareTester:
         self.ws_connected = False
         
         self.test_results = {
-            # Authentication tests
+            # Core file operations (regression check)
             "guest_creation": {"passed": False, "error": None},
-            "user_registration": {"passed": False, "error": None},
-            "user_login": {"passed": False, "error": None},
-            "get_me": {"passed": False, "error": None},
-            
-            # File management tests
             "file_upload": {"passed": False, "error": None},
             "file_list": {"passed": False, "error": None},
             "file_download": {"passed": False, "error": None},
-            "file_delete": {"passed": False, "error": None},
+            "cors_headers": {"passed": False, "error": None},
             
-            # Guest limit tests
-            "guest_data_limit": {"passed": False, "error": None},
+            # WebSocket signaling (high priority)
+            "websocket_connection": {"passed": False, "error": None},
+            "websocket_online_users": {"passed": False, "error": None},
+            "websocket_webrtc_signaling": {"passed": False, "error": None},
+            "websocket_update_info": {"passed": False, "error": None},
+            "online_users_endpoint": {"passed": False, "error": None},
             
-            # WebSocket tests
-            "websocket_connection": {"passed": False, "error": None}
+            # Google Drive integration (new feature)
+            "google_drive_connect": {"passed": False, "error": None},
+            "google_oauth_config": {"passed": False, "error": None}
         }
     
     def create_test_file(self, filename="test_file.txt", content="This is a test file for UniShare API testing.", size_mb=None):
