@@ -62,7 +62,7 @@ function App() {
   const [uploadProgress, setUploadProgress] = useState(null);
   const [downloadProgress, setDownloadProgress] = useState(null);
   const [dataLimitReached, setDataLimitReached] = useState(false);
-  const [driveConfigured, setDriveConfigured] = useState(true); // Assume true, will check on connect
+  const [driveConfigured, setDriveConfigured] = useState(false); // Default to false, only show if user has it connected
 
   // Check auth and ask for guest username when needed
   useEffect(() => {
