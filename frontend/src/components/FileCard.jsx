@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download, Trash2, Share2, File, HardDrive } from 'lucide-react';
+import { Download, Trash2, Share2, File, HardDrive, CloudUpload } from 'lucide-react';
 
 const formatFileSize = (bytes) => {
   if (bytes === 0) return '0 Bytes';
@@ -20,7 +20,7 @@ const formatDate = (dateString) => {
   });
 };
 
-const FileCard = ({ file, onDownload, onDelete, onShare }) => {
+const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, user }) => {
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 hover:shadow-lg transition-all duration-200">
       <div className="flex items-start justify-between mb-3">
