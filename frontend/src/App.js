@@ -302,7 +302,15 @@ function App() {
       window.location.href = response.data.authorization_url;
     } catch (error) {
       console.error('Failed to connect Drive:', error);
-      alert(error.response?.data?.detail || 'Failed to connect Google Drive');
+      const errorMsg = error.response?.data?.detail || 'Failed to connect Google Drive';
+      
+      // If Google Drive is not configured, hide the button
+      if (errorMsg.includes('not configured')) {
+        setDriveConfigured(false);
+        alert('Google Drive integration is not configured on this server. Please contact the administrator or use regular file upload.');
+      } else {
+        alert(errorMsg);
+      }
     }
   };
 
