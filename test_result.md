@@ -500,3 +500,19 @@ agent_communication:
       
       **BACKEND STATUS: 🟢 PRODUCTION READY**
       UniShare backend is fully functional for file sharing with authentication.
+  
+  - agent: "main"
+    message: |
+      🔧 **FIXING WEBSOCKET ROUTING ISSUE**
+      
+      **Issue Identified:**
+      - WebSocket endpoint was at /ws/{user_id} instead of /api/ws/{user_id}
+      - Kubernetes ingress only routes /api/* paths to backend
+      
+      **Fixes Applied:**
+      1. Updated backend WebSocket route from /ws/{user_id} to /api/ws/{user_id}
+      2. Updated webrtcManager2.js to use /api/ws/{user_id} path
+      3. Restarted backend service
+      
+      **Status:** WebSocket routing should now work correctly with Kubernetes ingress.
+      Needs retesting to confirm fix.
