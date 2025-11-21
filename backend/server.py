@@ -590,7 +590,7 @@ async def delete_file(file_id: str, current_user: User = Depends(get_current_use
 # WebSocket for WebRTC Signaling
 # ============================================================================
 
-@app.websocket("/ws/{user_id}")
+@app.websocket("/api/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
     """WebSocket endpoint for WebRTC signaling"""
     await manager.connect(user_id, websocket)
