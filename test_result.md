@@ -186,6 +186,24 @@ backend:
       - working: true
         agent: "testing"
         comment: "VERIFIED: GET /api/files endpoint fully functional. Returns proper JSON array of FileResponse objects. All uploaded files appear in the list with correct metadata. Response format matches FileResponse model specification perfectly."
+  
+  - task: "WebSocket signaling endpoint"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: "FAILED: WebSocket connection at /ws/{user_id} failed with 404. Issue: External WebSocket routing through Kubernetes ingress not configured. Backend WebSocket endpoint exists but not accessible externally."
+      - working: false
+        agent: "main"
+        comment: "FIXED: Updated backend WebSocket route from /ws/{user_id} to /api/ws/{user_id}. Updated webrtcManager2.js to use /api/ws/{user_id} path. Restarted backend service. WebSocket routing should now work correctly with Kubernetes ingress."
+      - working: true
+        agent: "testing"
+        comment: "VERIFIED: WebSocket signaling endpoint at /api/ws/{user_id} now fully functional. Fixed missing WebSocket dependencies by installing 'uvicorn[standard]' and 'websockets'. WebSocket connection establishes successfully, receives online_users broadcasts, handles update_info messages correctly. WebRTC signaling flow (offer, answer, ICE candidates) ready for P2P file transfers. Online users tracking working via GET /api/online-users endpoint."
 
 frontend:
   - task: "Upload progress indicator with speed and time"
