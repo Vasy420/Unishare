@@ -676,6 +676,13 @@ function App() {
           token={token}
         />
       )}
+
+      {/* Google Drive Connect Modal */}
+      <GoogleDriveConnectModal
+        isOpen={showDriveConnectModal}
+        onConnect={handleDriveConnectNow}
+        onSkip={handleDriveConnectSkip}
+      />
     </div>
   );
 }
