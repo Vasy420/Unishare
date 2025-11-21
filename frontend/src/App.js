@@ -377,7 +377,7 @@ function App() {
                       <HardDrive className="w-4 h-4" />
                       <span className="text-sm">Browse Drive</span>
                     </button>
-                  )}
+                  ) : null}
 
                   <div className="flex items-center space-x-2 px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg">
                     <span className="text-xl">{user.emoji}</span>
