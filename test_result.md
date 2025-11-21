@@ -213,6 +213,18 @@ backend:
       - working: true
         agent: "testing"
         comment: "VERIFIED: WebSocket signaling endpoint fully functional after dependency fixes. ✅ Single WebSocket connections work perfectly - connection establishes, receives online_users broadcasts, update_info messages work correctly. ✅ Online users tracking via GET /api/online-users endpoint working. ✅ WebRTC signaling messages (offer, answer, ICE candidates) are properly handled by backend. ⚠️ Minor issue: Concurrent multiple WebSocket connections have timing issues, but single connections and core P2P signaling functionality is operational. WebSocket P2P functionality is ready for production use."
+  
+  - task: "Online users endpoint"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "VERIFIED: GET /api/online-users endpoint fully functional. Returns correct JSON structure with 'users' array. Shows currently connected WebSocket users with their username, emoji, and connection timestamp. Properly tracks user connections and disconnections. Tested with active WebSocket connections - users appear in list immediately and are removed when disconnected."
 
 frontend:
   - task: "Upload progress indicator with speed and time"
