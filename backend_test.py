@@ -532,6 +532,83 @@ class UniShareTester:
             print(f"❌ Guest Data Limit test FAILED: {str(e)}")
             self.test_results["guest_data_limit"]["error"] = str(e)
     
+    def test_websocket_connection(self):
+        """Test WebSocket connection for WebRTC signaling"""
+        print("\n=== Testing WebSocket Connection ===")
+        
+        try:
+            # Generate a test user ID
+            test_user_id = str(uuid.uuid4())
+            ws_url = f"{WS_URL}/ws/{test_user_id}"
+            
+            print(f"Connecting to WebSocket: {ws_url}")
+            
+            # Create WebSocket connection
+            def on_message(ws, message):
+                self.ws_messages.append(json.loads(message))
+                print(f"   - Received message: {message}")
+            
+            def on_error(ws, error):
+                print(f"   - WebSocket error: {error}")
+            
+            def on_close(ws, close_status_code, close_msg):
+                print(f"   - WebSocket closed: {close_status_code} - {close_msg}")
+                self.ws_connected = False
+            
+            def on_open(ws):
+                print("   - WebSocket connection opened")
+                self.ws_connected = True
+                
+                # Send a test message
+                test_message = {
+                    "type": "update_info",
+                    "username": "TestUser",
+                    "emoji": "🧪"
+                }
+                ws.send(json.dumps(test_message))
+                
+                # Close connection after a short delay
+                def close_connection():
+                    time.sleep(2)
+                    ws.close()
+                
+                threading.Thread(target=close_connection).start()
+            
+            # Try to establish WebSocket connection
+            ws = websocket.WebSocketApp(ws_url,
+                                      on_open=on_open,
+                                      on_message=on_message,
+                                      on_error=on_error,
+                                      on_close=on_close)
+            
+            # Run WebSocket in a separate thread with timeout
+            ws_thread = threading.Thread(target=ws.run_forever)
+            ws_thread.daemon = True
+            ws_thread.start()
+            
+            # Wait for connection and messages
+            timeout = 10
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                if self.ws_connected:
+                    break
+                time.sleep(0.1)
+            
+            # Wait a bit more for messages
+            time.sleep(3)
+            
+            if self.ws_connected or len(self.ws_messages) > 0:
+                print("✅ WebSocket Connection test PASSED")
+                print(f"   - Connection established successfully")
+                print(f"   - Received {len(self.ws_messages)} messages")
+                self.test_results["websocket_connection"]["passed"] = True
+            else:
+                raise Exception("WebSocket connection could not be established")
+                
+        except Exception as e:
+            print(f"❌ WebSocket Connection test FAILED: {str(e)}")
+            self.test_results["websocket_connection"]["error"] = str(e)
+    
     def test_404_handling(self):
         """Test 404 error handling for non-existent files"""
         print("\n=== Testing 404 Error Handling ===")
@@ -548,15 +625,17 @@ class UniShareTester:
         except Exception as e:
             print(f"⚠️  Download 404 test error: {str(e)}")
         
-        # Test delete 404
-        try:
-            response = requests.delete(f"{BASE_URL}/files/{fake_file_id}", timeout=30)
-            if response.status_code == 404:
-                print("✅ Delete 404 handling works correctly")
-            else:
-                print(f"⚠️  Delete 404 test: Expected 404, got {response.status_code}")
-        except Exception as e:
-            print(f"⚠️  Delete 404 test error: {str(e)}")
+        # Test delete 404 with authentication
+        if self.guest_token:
+            try:
+                headers = self.get_auth_headers(self.guest_token)
+                response = requests.delete(f"{BASE_URL}/files/{fake_file_id}", headers=headers, timeout=30)
+                if response.status_code == 404:
+                    print("✅ Delete 404 handling works correctly")
+                else:
+                    print(f"⚠️  Delete 404 test: Expected 404, got {response.status_code}")
+            except Exception as e:
+                print(f"⚠️  Delete 404 test error: {str(e)}")
     
     def run_all_tests(self):
         """Run all backend API tests"""
