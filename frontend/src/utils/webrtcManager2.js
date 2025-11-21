@@ -103,7 +103,14 @@ class WebRTCManager {
     };
 
     peerConnection.oniceconnectionstatechange = () => {
-      console.log(`ICE connection state with ${peerId}:`, peerConnection.iceConnectionState);
+      console.log(`🔄 ICE connection state with ${peerId}:`, peerConnection.iceConnectionState);
+      if (peerConnection.iceConnectionState === 'failed' || peerConnection.iceConnectionState === 'disconnected') {
+        console.error(`❌ ICE connection ${peerConnection.iceConnectionState} with ${peerId}`);
+      }
+    };
+    
+    peerConnection.onconnectionstatechange = () => {
+      console.log(`🔄 Connection state with ${peerId}:`, peerConnection.connectionState);
     };
 
     // Create data channel if initiator
