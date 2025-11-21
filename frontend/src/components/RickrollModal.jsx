@@ -1,13 +1,16 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X, Volume2 } from 'lucide-react';
 
 const RickrollModal = ({ isOpen, onClose }) => {
   const iframeRef = useRef(null);
+  const [videoKey, setVideoKey] = useState(0);
 
   useEffect(() => {
     // Prevent body scroll when modal is open
     if (isOpen) {
       document.body.style.overflow = 'hidden';
+      // Force iframe reload with new key to ensure autoplay
+      setVideoKey(prev => prev + 1);
     } else {
       document.body.style.overflow = 'unset';
     }
@@ -54,14 +57,14 @@ const RickrollModal = ({ isOpen, onClose }) => {
         {/* Video Container */}
         <div className="relative" style={{ paddingBottom: '56.25%' }}>
           <iframe
+            key={videoKey}
             ref={iframeRef}
             className="absolute inset-0 w-full h-full"
-            src="https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1&mute=0&rel=0&controls=1&modestbranding=1&fs=1"
+            src={`https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1&mute=0&rel=0&controls=1&modestbranding=1&start=0&enablejsapi=1&origin=${window.location.origin}`}
             title="Rick Astley - Never Gonna Give You Up"
             frameBorder="0"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
             allowFullScreen
-            loading="eager"
           />
         </div>
 
