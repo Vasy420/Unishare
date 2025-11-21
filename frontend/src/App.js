@@ -16,6 +16,9 @@ import './App.css';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
 
+// Guest data limit (2GB in bytes)
+const GUEST_DATA_LIMIT = 2 * 1024 * 1024 * 1024;
+
 // File history in localStorage
 const HISTORY_KEY = 'unishare_file_history';
 
