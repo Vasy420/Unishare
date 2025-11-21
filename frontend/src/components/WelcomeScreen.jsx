@@ -77,10 +77,10 @@ const WelcomeScreen = ({ onGetStarted }) => {
           </div>
         </div>
 
-        {/* Easter Egg Button - Hidden in bottom right corner */}
+        {/* Easter Egg Button - Hidden in bottom left corner */}
         <button
           onClick={() => setShowRickroll(true)}
-          className="fixed bottom-4 right-4 w-12 h-12 rounded-full bg-white/10 backdrop-blur-sm hover:bg-white/20 transition-all duration-300 flex items-center justify-center group opacity-30 hover:opacity-100"
+          className="fixed bottom-4 left-4 w-12 h-12 rounded-full bg-white/10 backdrop-blur-sm hover:bg-white/20 transition-all duration-300 flex items-center justify-center group opacity-30 hover:opacity-100"
           title="🎵"
         >
           <Music className="w-5 h-5 text-white group-hover:animate-spin" />
