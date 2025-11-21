@@ -173,8 +173,15 @@ class WebRTCManager {
         // Store chunk information
         const fileInfo = this.receivingFiles.get(message.fileId);
         if (fileInfo) {
-          fileInfo.chunks[message.index] = message.data;
-          fileInfo.receivedSize += message.data.length;
+          // Decode base64 chunk to binary
+          const binaryString = atob(message.data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          
+          fileInfo.chunks[message.index] = bytes;
+          fileInfo.receivedSize += bytes.length;
           
           const progress = (fileInfo.receivedSize / fileInfo.size) * 100;
           
@@ -192,8 +199,10 @@ class WebRTCManager {
           
           // Check if all chunks received
           if (message.index === message.totalChunks - 1) {
-            // Reconstruct file
+            // Reconstruct file from all chunks
             const blob = new Blob(fileInfo.chunks, { type: fileInfo.type });
+            
+            console.log('File received via P2P:', fileInfo.name, 'Size:', blob.size);
             
             // Trigger file received callback
             if (this.onFileReceived) {
