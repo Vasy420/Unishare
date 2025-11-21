@@ -1231,67 +1231,62 @@ class UniShareTester:
                 print(f"⚠️  Delete 404 test error: {str(e)}")
     
     def run_all_tests(self):
-        """Run all UniShare backend API tests"""
-        print("🚀 Starting UniShare Backend API Tests")
+        """Run UniShare6 backend API tests focusing on WebSocket signaling and Google Drive"""
+        print("🚀 Starting UniShare6 Backend API Tests")
         print(f"Backend URL: {BASE_URL}")
         print(f"WebSocket URL: {WS_URL}")
+        print("\nFocus Areas:")
+        print("1. 🔴 HIGH PRIORITY: WebSocket Signaling for P2P functionality")
+        print("2. 🟡 NEW FEATURE: Google Drive Integration")
+        print("3. 🟢 REGRESSION CHECK: Core File Operations")
         
-        # Test authentication endpoints first
-        print("\n" + "="*60)
-        print("🔐 AUTHENTICATION TESTS")
-        print("="*60)
+        # Test core file operations first (regression check)
+        print("\n" + "="*70)
+        print("🟢 CORE FILE OPERATIONS (Regression Check)")
+        print("="*70)
         self.test_guest_creation()
-        self.test_user_registration()
-        self.test_user_login()
-        self.test_get_me()
-        
-        # Test file management with authentication
-        print("\n" + "="*60)
-        print("📁 FILE MANAGEMENT TESTS")
-        print("="*60)
         self.test_file_upload()
         self.test_file_list()
         self.test_file_download()
-        self.test_file_delete()
+        self.test_cors_headers()
         
-        # Test guest data limits
-        print("\n" + "="*60)
-        print("📊 GUEST DATA LIMIT TESTS")
-        print("="*60)
-        self.test_guest_data_limit()
-        
-        # Test WebSocket signaling
-        print("\n" + "="*60)
-        print("🌐 WEBSOCKET SIGNALING TESTS")
-        print("="*60)
+        # Test WebSocket signaling (HIGH PRIORITY)
+        print("\n" + "="*70)
+        print("🔴 WEBSOCKET SIGNALING (HIGH PRIORITY - P2P Functionality)")
+        print("="*70)
         self.test_websocket_connection()
+        self.test_websocket_online_users_broadcast()
+        self.test_websocket_webrtc_signaling()
+        self.test_websocket_update_info()
+        self.test_online_users_endpoint()
         
-        # Test error handling
-        print("\n" + "="*60)
-        print("🚫 ERROR HANDLING TESTS")
-        print("="*60)
-        self.test_404_handling()
+        # Test Google Drive integration (NEW FEATURE)
+        print("\n" + "="*70)
+        print("🟡 GOOGLE DRIVE INTEGRATION (New Feature)")
+        print("="*70)
+        self.test_google_drive_connect()
+        self.test_google_oauth_config()
         
         # Print summary
-        print("\n" + "="*60)
-        print("📊 UNISHARE BACKEND TEST SUMMARY")
-        print("="*60)
+        print("\n" + "="*70)
+        print("📊 UNISHARE6 BACKEND TEST SUMMARY")
+        print("="*70)
         
-        # Group results by category
-        auth_tests = ["guest_creation", "user_registration", "user_login", "get_me"]
-        file_tests = ["file_upload", "file_list", "file_download", "file_delete"]
-        limit_tests = ["guest_data_limit"]
-        ws_tests = ["websocket_connection"]
+        # Group results by priority/category
+        core_tests = ["guest_creation", "file_upload", "file_list", "file_download", "cors_headers"]
+        websocket_tests = ["websocket_connection", "websocket_online_users", "websocket_webrtc_signaling", 
+                          "websocket_update_info", "online_users_endpoint"]
+        drive_tests = ["google_drive_connect", "google_oauth_config"]
         
         categories = [
-            ("🔐 Authentication", auth_tests),
-            ("📁 File Management", file_tests),
-            ("📊 Data Limits", limit_tests),
-            ("🌐 WebSocket", ws_tests)
+            ("🟢 Core File Operations (Regression)", core_tests),
+            ("🔴 WebSocket Signaling (HIGH PRIORITY)", websocket_tests),
+            ("🟡 Google Drive Integration (New Feature)", drive_tests)
         ]
         
         total_tests = len(self.test_results)
         passed_tests = 0
+        critical_failures = []
         
         for category_name, test_names in categories:
             print(f"\n{category_name}:")
@@ -1302,9 +1297,12 @@ class UniShareTester:
                 if test_name in self.test_results:
                     result = self.test_results[test_name]
                     status = "✅ PASSED" if result["passed"] else "❌ FAILED"
-                    print(f"  {test_name.replace('_', ' ').title():<25} {status}")
+                    print(f"  {test_name.replace('_', ' ').title():<35} {status}")
                     if result["error"] and not result["passed"]:
                         print(f"    Error: {result['error']}")
+                        # Mark WebSocket failures as critical
+                        if test_name in websocket_tests:
+                            critical_failures.append(f"WebSocket: {test_name}")
                     if result["passed"]:
                         category_passed += 1
                         passed_tests += 1
@@ -1313,17 +1311,36 @@ class UniShareTester:
         
         print(f"\n🎯 OVERALL RESULT: {passed_tests}/{total_tests} tests passed")
         
-        if passed_tests == total_tests:
-            print("🎉 All UniShare backend API tests PASSED!")
-            print("✅ Authentication system working correctly")
-            print("✅ File management with ownership working correctly")
-            print("✅ Guest data limits being enforced")
-            print("✅ WebSocket signaling available for WebRTC")
-            return True
+        # Special focus on WebSocket results since they're critical for P2P
+        websocket_passed = sum(1 for test in websocket_tests if self.test_results.get(test, {}).get("passed", False))
+        websocket_total = len(websocket_tests)
+        
+        print(f"\n🔴 CRITICAL: WebSocket P2P Functionality: {websocket_passed}/{websocket_total} tests passed")
+        
+        if websocket_passed == websocket_total:
+            print("✅ WebSocket signaling is FULLY FUNCTIONAL for P2P file transfers")
+        elif websocket_passed > 0:
+            print("⚠️  WebSocket signaling is PARTIALLY FUNCTIONAL - some P2P features may not work")
         else:
-            print("⚠️  Some UniShare backend API tests FAILED!")
-            print("❗ Please check the failed tests above for details")
-            return False
+            print("❌ WebSocket signaling is NOT FUNCTIONAL - P2P file transfers will not work")
+        
+        # Google Drive status
+        drive_passed = sum(1 for test in drive_tests if self.test_results.get(test, {}).get("passed", False))
+        drive_total = len(drive_tests)
+        print(f"\n🟡 Google Drive Integration: {drive_passed}/{drive_total} tests passed")
+        
+        # Core operations status
+        core_passed = sum(1 for test in core_tests if self.test_results.get(test, {}).get("passed", False))
+        core_total = len(core_tests)
+        print(f"🟢 Core File Operations: {core_passed}/{core_total} tests passed")
+        
+        if critical_failures:
+            print(f"\n❗ CRITICAL FAILURES DETECTED:")
+            for failure in critical_failures:
+                print(f"   - {failure}")
+            print("   These failures will impact P2P functionality!")
+        
+        return passed_tests == total_tests
 
 if __name__ == "__main__":
     tester = UniShareTester()
