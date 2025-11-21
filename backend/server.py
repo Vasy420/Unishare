@@ -1001,6 +1001,65 @@ async def share_drive_file(drive_file_id: str, current_user: User = Depends(get_
         logger.error(f"Failed to share Drive file: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to share Drive file: {str(e)}")
 
+@api_router.post("/drive/save/{file_id}")
+async def save_to_drive(file_id: str, current_user: User = Depends(get_current_user)):
+    """Save a UniShare file to Google Drive"""
+    try:
+        service = await get_drive_service(current_user)
+        
+        # Get file from our database
+        file_doc = await db.files.find_one({"id": file_id}, {"_id": 0})
+        if not file_doc:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # If it's already a Drive file, just return the link
+        if file_doc.get('source') == 'google_drive':
+            drive_file_id = file_doc.get('drive_file_id')
+            return {
+                "success": True,
+                "message": "File is already on Google Drive",
+                "drive_link": f"https://drive.google.com/file/d/{drive_file_id}/view"
+            }
+        
+        # Read the local file
+        file_path = UPLOAD_DIR / file_doc['filename']
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found on server")
+        
+        # Upload to Google Drive
+        from googleapiclient.http import MediaFileUpload
+        
+        file_metadata = {
+            'name': file_doc['original_filename']
+        }
+        
+        media = MediaFileUpload(
+            str(file_path),
+            mimetype=file_doc.get('content_type', 'application/octet-stream'),
+            resumable=True
+        )
+        
+        drive_file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id, webViewLink'
+        ).execute()
+        
+        logger.info(f"File {file_id} saved to Drive as {drive_file.get('id')}")
+        
+        return {
+            "success": True,
+            "drive_file_id": drive_file.get('id'),
+            "drive_link": drive_file.get('webViewLink'),
+            "message": "File saved to Google Drive successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to save to Drive: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save to Drive: {str(e)}")
+
 # ============================================================================
 # Main App Configuration
 # ============================================================================
