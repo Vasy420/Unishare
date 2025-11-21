@@ -37,17 +37,30 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
 
     try {
       // First, we need to download the file to share it via P2P
-      const response = await fetch(shareUrl);
+      const downloadUrl = `${backendUrl}${file.download_url}`;
+      const response = await fetch(downloadUrl);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch file: ${response.statusText}`);
+      }
+      
       const blob = await response.blob();
       const fileToShare = new File([blob], file.original_filename, { type: file.content_type });
 
       // Initiate connection if not already connected
       if (!webrtcManager.dataChannels.has(peerId)) {
+        console.log('Initiating WebRTC connection to peer:', peerId);
         await webrtcManager.initiateConnection(peerId);
-        // Wait a bit for connection to establish
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Wait for connection to establish
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        // Check if connection is established
+        if (!webrtcManager.dataChannels.has(peerId)) {
+          throw new Error('Failed to establish P2P connection');
+        }
       }
 
+      console.log('Sending file via P2P:', fileToShare.name);
       // Send file
       await webrtcManager.sendFile(peerId, fileToShare, ({ progress }) => {
         setShareProgress(progress);
@@ -56,11 +69,13 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
       alert('File shared successfully via P2P!');
       setSharing(false);
       setShareProgress(0);
+      setSelectedPeer(null);
     } catch (error) {
       console.error('P2P share failed:', error);
       alert('Failed to share file via P2P: ' + error.message);
       setSharing(false);
       setShareProgress(0);
+      setSelectedPeer(null);
     }
   };
 
