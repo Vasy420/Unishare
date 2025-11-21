@@ -379,13 +379,13 @@ class UniShareTester:
             print(f"❌ File List test FAILED: {str(e)}")
             self.test_results["file_list"]["error"] = str(e)
     
-    def test_download_api(self):
+    def test_file_download(self):
         """Test GET /api/files/{file_id}/download endpoint"""
-        print("\n=== Testing Download API ===")
+        print("\n=== Testing File Download ===")
         
         if not self.uploaded_files:
-            print("❌ Download API test SKIPPED: No uploaded files to test")
-            self.test_results["download"]["error"] = "No uploaded files available"
+            print("❌ File Download test SKIPPED: No uploaded files to test")
+            self.test_results["file_download"]["error"] = "No uploaded files available"
             return
         
         try:
@@ -410,18 +410,18 @@ class UniShareTester:
                 if len(content) != file_info['size']:
                     raise Exception(f"Downloaded file size mismatch: expected {file_info['size']}, got {len(content)}")
                 
-                print("✅ Download API test PASSED")
+                print("✅ File Download test PASSED")
                 print(f"   - Downloaded {len(content)} bytes")
                 print(f"   - Original filename: {file_info['original_filename']}")
                 
-                self.test_results["download"]["passed"] = True
+                self.test_results["file_download"]["passed"] = True
                 
             else:
                 raise Exception(f"Download failed with status {response.status_code}: {response.text}")
                 
         except Exception as e:
-            print(f"❌ Download API test FAILED: {str(e)}")
-            self.test_results["download"]["error"] = str(e)
+            print(f"❌ File Download test FAILED: {str(e)}")
+            self.test_results["file_download"]["error"] = str(e)
     
     def test_delete_api(self):
         """Test DELETE /api/files/{file_id} endpoint"""
