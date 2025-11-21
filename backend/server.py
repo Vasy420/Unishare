@@ -137,6 +137,7 @@ class User(BaseModel):
     emoji: str = "👤"
     total_data_shared: int = 0  # in bytes
     google_drive_connected: bool = False
+    google_id: Optional[str] = None  # Google OAuth ID
     created_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class UserResponse(BaseModel):
