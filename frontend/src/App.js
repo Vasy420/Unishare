@@ -50,7 +50,7 @@ const addToFileHistory = (file) => {
 
 function App() {
   const { theme, toggleTheme } = useTheme();
-  const { user, token, loading: authLoading, loginAsGuest, register, login, logout } = useAuth();
+  const { user, token, loading: authLoading, loginAsGuest, register, login, logout, setToken, setUser } = useAuth();
   
   const [files, setFiles] = useState([]);
   const [fileHistory, setFileHistory] = useState([]);
@@ -64,8 +64,9 @@ function App() {
   const [uploadProgress, setUploadProgress] = useState(null);
   const [downloadProgress, setDownloadProgress] = useState(null);
   const [dataLimitReached, setDataLimitReached] = useState(false);
-  // Google Drive is now configured with OAuth credentials
   const [driveConfigured, setDriveConfigured] = useState(true);
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [showDriveConnectModal, setShowDriveConnectModal] = useState(false);
 
   // Check auth and ask for guest username when needed
   useEffect(() => {
