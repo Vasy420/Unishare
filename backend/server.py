@@ -11,7 +11,7 @@ from pathlib import Path
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
@@ -21,6 +21,7 @@ import uuid
 import shutil
 import io
 import json
+import requests
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
