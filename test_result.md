@@ -579,3 +579,36 @@ agent_communication:
       
       **BACKEND STATUS: 🟢 PRODUCTION READY**
       UniShare backend is fully functional including WebSocket signaling for advanced P2P features.
+  
+  - agent: "main"
+    message: |
+      🔧 **FIXING WEBRTC P2P AND GOOGLE DRIVE INTEGRATION**
+      
+      **Issues Identified:**
+      1. Google Drive disabled by default - needs OAuth credentials
+      2. WebRTC P2P has bugs in chunk handling and file download
+      
+      **Fixes Applied:**
+      
+      **1. Google Drive Integration:**
+      - Added Google OAuth credentials to backend .env
+      - Client ID: 1775457860-31es87hqmlreoupbqa50gkvm2taib26t.apps.googleusercontent.com
+      - Redirect URI: https://unishare-rescue.preview.emergentagent.com/api/drive/callback
+      - Enabled Google Drive in frontend (driveConfigured = true)
+      - Backend restarted to apply credentials
+      
+      **2. WebRTC P2P Fixes:**
+      - Fixed ShareModal2.jsx: Changed from shareUrl to proper download_url with backendUrl
+      - Fixed chunk decoding in webrtcManager2.js: Added base64 to Uint8Array conversion
+      - Added better error handling and logging throughout WebRTC flow
+      - Improved data channel connection checks
+      - Added connection state monitoring
+      - Increased connection wait time from 2s to 3s
+      - Added proper cleanup on failure
+      
+      **3. Enhanced Logging:**
+      - Added emoji indicators for WebRTC states (✅ ❌ 🔄)
+      - Console logs for debugging P2P connection and file transfer
+      - Better error messages for troubleshooting
+      
+      **Status:** Ready for testing both Google Drive and WebRTC P2P features
