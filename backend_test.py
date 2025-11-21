@@ -60,12 +60,20 @@ class UniShareTester:
             "websocket_connection": {"passed": False, "error": None}
         }
     
-    def create_test_file(self, filename="test_file.txt", content="This is a test file for backend API testing."):
-        """Create a temporary test file"""
+    def create_test_file(self, filename="test_file.txt", content="This is a test file for UniShare API testing.", size_mb=None):
+        """Create a temporary test file with optional size"""
+        if size_mb:
+            # Create a file of specific size in MB
+            content = "A" * (size_mb * 1024 * 1024)
+        
         temp_file = tempfile.NamedTemporaryFile(mode='w', suffix=f"_{filename}", delete=False)
         temp_file.write(content)
         temp_file.close()
         return temp_file.name
+    
+    def get_auth_headers(self, token):
+        """Get authorization headers for API requests"""
+        return {"Authorization": f"Bearer {token}"} if token else {}
     
     def test_upload_api(self):
         """Test POST /api/upload endpoint"""
