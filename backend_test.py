@@ -638,41 +638,101 @@ class UniShareTester:
                 print(f"⚠️  Delete 404 test error: {str(e)}")
     
     def run_all_tests(self):
-        """Run all backend API tests"""
-        print("🚀 Starting Backend API Tests")
+        """Run all UniShare backend API tests"""
+        print("🚀 Starting UniShare Backend API Tests")
         print(f"Backend URL: {BASE_URL}")
+        print(f"WebSocket URL: {WS_URL}")
         
-        # Test in sequence: upload -> list -> download -> delete
-        self.test_upload_api()
-        self.test_list_files_api()
-        self.test_download_api()
-        self.test_delete_api()
+        # Test authentication endpoints first
+        print("\n" + "="*60)
+        print("🔐 AUTHENTICATION TESTS")
+        print("="*60)
+        self.test_guest_creation()
+        self.test_user_registration()
+        self.test_user_login()
+        self.test_get_me()
+        
+        # Test file management with authentication
+        print("\n" + "="*60)
+        print("📁 FILE MANAGEMENT TESTS")
+        print("="*60)
+        self.test_file_upload()
+        self.test_file_list()
+        self.test_file_download()
+        self.test_file_delete()
+        
+        # Test guest data limits
+        print("\n" + "="*60)
+        print("📊 GUEST DATA LIMIT TESTS")
+        print("="*60)
+        self.test_guest_data_limit()
+        
+        # Test WebSocket signaling
+        print("\n" + "="*60)
+        print("🌐 WEBSOCKET SIGNALING TESTS")
+        print("="*60)
+        self.test_websocket_connection()
+        
+        # Test error handling
+        print("\n" + "="*60)
+        print("🚫 ERROR HANDLING TESTS")
+        print("="*60)
         self.test_404_handling()
         
         # Print summary
-        print("\n" + "="*50)
-        print("📊 TEST SUMMARY")
-        print("="*50)
+        print("\n" + "="*60)
+        print("📊 UNISHARE BACKEND TEST SUMMARY")
+        print("="*60)
+        
+        # Group results by category
+        auth_tests = ["guest_creation", "user_registration", "user_login", "get_me"]
+        file_tests = ["file_upload", "file_list", "file_download", "file_delete"]
+        limit_tests = ["guest_data_limit"]
+        ws_tests = ["websocket_connection"]
+        
+        categories = [
+            ("🔐 Authentication", auth_tests),
+            ("📁 File Management", file_tests),
+            ("📊 Data Limits", limit_tests),
+            ("🌐 WebSocket", ws_tests)
+        ]
         
         total_tests = len(self.test_results)
-        passed_tests = sum(1 for result in self.test_results.values() if result["passed"])
+        passed_tests = 0
         
-        for test_name, result in self.test_results.items():
-            status = "✅ PASSED" if result["passed"] else "❌ FAILED"
-            print(f"{test_name.upper():<15} {status}")
-            if result["error"]:
-                print(f"                Error: {result['error']}")
+        for category_name, test_names in categories:
+            print(f"\n{category_name}:")
+            category_passed = 0
+            category_total = len(test_names)
+            
+            for test_name in test_names:
+                if test_name in self.test_results:
+                    result = self.test_results[test_name]
+                    status = "✅ PASSED" if result["passed"] else "❌ FAILED"
+                    print(f"  {test_name.replace('_', ' ').title():<25} {status}")
+                    if result["error"] and not result["passed"]:
+                        print(f"    Error: {result['error']}")
+                    if result["passed"]:
+                        category_passed += 1
+                        passed_tests += 1
+            
+            print(f"  Category Result: {category_passed}/{category_total} passed")
         
-        print(f"\nOverall: {passed_tests}/{total_tests} tests passed")
+        print(f"\n🎯 OVERALL RESULT: {passed_tests}/{total_tests} tests passed")
         
         if passed_tests == total_tests:
-            print("🎉 All backend API tests PASSED!")
+            print("🎉 All UniShare backend API tests PASSED!")
+            print("✅ Authentication system working correctly")
+            print("✅ File management with ownership working correctly")
+            print("✅ Guest data limits being enforced")
+            print("✅ WebSocket signaling available for WebRTC")
             return True
         else:
-            print("⚠️  Some backend API tests FAILED!")
+            print("⚠️  Some UniShare backend API tests FAILED!")
+            print("❗ Please check the failed tests above for details")
             return False
 
 if __name__ == "__main__":
-    tester = BackendTester()
+    tester = UniShareTester()
     success = tester.run_all_tests()
     exit(0 if success else 1)
