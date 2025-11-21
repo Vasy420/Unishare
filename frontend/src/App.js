@@ -567,7 +567,7 @@ function App() {
         />
       )}
 
-      {user && user.google_drive_connected && (
+      {user && driveConfigured && user.google_drive_connected && (
         <GoogleDrivePicker
           isOpen={showDrivePicker}
           onClose={() => setShowDrivePicker(false)}
