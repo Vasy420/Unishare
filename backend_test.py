@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Backend API Testing Script for File Sharing Application
-Tests all backend endpoints: upload, list, download, delete
+UniShare Backend API Testing Script
+Tests authentication, file management, guest limits, and WebSocket signaling
 """
 
 import requests
@@ -10,6 +10,10 @@ import os
 import tempfile
 from pathlib import Path
 import time
+import websocket
+import threading
+import uuid
+from datetime import datetime
 
 # Get backend URL from frontend .env file
 def get_backend_url():
@@ -22,9 +26,11 @@ def get_backend_url():
     return "http://localhost:8001"
 
 BASE_URL = get_backend_url() + "/api"
+WS_URL = get_backend_url().replace("https://", "wss://").replace("http://", "ws://")
 print(f"Testing backend at: {BASE_URL}")
+print(f"WebSocket URL: {WS_URL}")
 
-class BackendTester:
+class UniShareTester:
     def __init__(self):
         self.uploaded_files = []
         self.test_results = {
