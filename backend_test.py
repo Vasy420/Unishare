@@ -270,12 +270,80 @@ class UniShareTester:
             print(f"❌ Get Me test FAILED: {str(e)}")
             self.test_results["get_me"]["error"] = str(e)
     
-    def test_list_files_api(self):
-        """Test GET /api/files endpoint"""
-        print("\n=== Testing List Files API ===")
+    def test_file_upload(self):
+        """Test POST /api/upload endpoint with authentication"""
+        print("\n=== Testing File Upload with Authentication ===")
+        
+        if not self.guest_token:
+            print("❌ File Upload test SKIPPED: No authentication token available")
+            self.test_results["file_upload"]["error"] = "No authentication token available"
+            return
         
         try:
-            response = requests.get(f"{BASE_URL}/files", timeout=30)
+            # Create test file
+            test_file_path = self.create_test_file("upload_test.txt", "Hello from UniShare backend test!")
+            
+            headers = self.get_auth_headers(self.guest_token)
+            
+            with open(test_file_path, 'rb') as f:
+                files = {'file': ('upload_test.txt', f, 'text/plain')}
+                response = requests.post(f"{BASE_URL}/upload", files=files, headers=headers, timeout=30)
+            
+            print(f"Upload Response Status: {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Verify response structure
+                required_fields = ['id', 'filename', 'original_filename', 'size', 'upload_date', 'download_url', 'share_url', 'owner_username']
+                missing_fields = [field for field in required_fields if field not in data]
+                
+                if missing_fields:
+                    raise Exception(f"Missing fields in response: {missing_fields}")
+                
+                # Verify file metadata
+                if data['original_filename'] != 'upload_test.txt':
+                    raise Exception(f"Original filename mismatch: expected 'upload_test.txt', got '{data['original_filename']}'")
+                
+                if data['size'] <= 0:
+                    raise Exception(f"Invalid file size: {data['size']}")
+                
+                if data['owner_username'] != self.guest_user['username']:
+                    raise Exception(f"Owner username mismatch: expected {self.guest_user['username']}, got {data['owner_username']}")
+                
+                # Store uploaded file info for later tests
+                self.uploaded_files.append(data)
+                
+                print("✅ File Upload test PASSED")
+                print(f"   - File ID: {data['id']}")
+                print(f"   - Original filename: {data['original_filename']}")
+                print(f"   - Size: {data['size']} bytes")
+                print(f"   - Owner: {data['owner_username']}")
+                
+                self.test_results["file_upload"]["passed"] = True
+                
+            else:
+                raise Exception(f"Upload failed with status {response.status_code}: {response.text}")
+                
+            # Clean up temp file
+            os.unlink(test_file_path)
+            
+        except Exception as e:
+            print(f"❌ File Upload test FAILED: {str(e)}")
+            self.test_results["file_upload"]["error"] = str(e)
+    
+    def test_file_list(self):
+        """Test GET /api/files endpoint with authentication"""
+        print("\n=== Testing File List with Authentication ===")
+        
+        if not self.guest_token:
+            print("❌ File List test SKIPPED: No authentication token available")
+            self.test_results["file_list"]["error"] = "No authentication token available"
+            return
+        
+        try:
+            headers = self.get_auth_headers(self.guest_token)
+            response = requests.get(f"{BASE_URL}/files", headers=headers, timeout=30)
             
             print(f"List Files Response Status: {response.status_code}")
             
@@ -285,7 +353,7 @@ class UniShareTester:
                 if not isinstance(data, list):
                     raise Exception(f"Expected list response, got {type(data)}")
                 
-                print(f"✅ List Files API test PASSED")
+                print(f"✅ File List test PASSED")
                 print(f"   - Found {len(data)} files")
                 
                 # Verify our uploaded file is in the list
@@ -302,14 +370,14 @@ class UniShareTester:
                     else:
                         print(f"   - Warning: Uploaded file {uploaded_file_id} not found in list")
                 
-                self.test_results["list_files"]["passed"] = True
+                self.test_results["file_list"]["passed"] = True
                 
             else:
                 raise Exception(f"List files failed with status {response.status_code}: {response.text}")
                 
         except Exception as e:
-            print(f"❌ List Files API test FAILED: {str(e)}")
-            self.test_results["list_files"]["error"] = str(e)
+            print(f"❌ File List test FAILED: {str(e)}")
+            self.test_results["file_list"]["error"] = str(e)
     
     def test_download_api(self):
         """Test GET /api/files/{file_id}/download endpoint"""
