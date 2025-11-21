@@ -593,7 +593,7 @@ agent_communication:
       **1. Google Drive Integration:**
       - Added Google OAuth credentials to backend .env
       - Client ID: 1775457860-31es87hqmlreoupbqa50gkvm2taib26t.apps.googleusercontent.com
-      - Redirect URI: https://unishare-rescue.preview.emergentagent.com/api/drive/callback
+      - Redirect URI: https://signaling-fix.preview.emergentagent.com/api/drive/callback
       - Enabled Google Drive in frontend (driveConfigured = true)
       - Backend restarted to apply credentials
       
