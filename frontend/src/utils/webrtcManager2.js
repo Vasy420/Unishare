@@ -20,7 +20,7 @@ class WebRTCManager {
     this.userId = userId;
     const wsUrl = backendUrl.replace('https://', 'wss://').replace('http://', 'ws://');
     
-    this.ws = new WebSocket(`${wsUrl}/ws/${userId}`);
+    this.ws = new WebSocket(`${wsUrl}/api/ws/${userId}`);
 
     this.ws.onopen = () => {
       console.log('WebSocket connected');
