@@ -33,11 +33,31 @@ print(f"WebSocket URL: {WS_URL}")
 class UniShareTester:
     def __init__(self):
         self.uploaded_files = []
+        self.guest_token = None
+        self.user_token = None
+        self.guest_user = None
+        self.registered_user = None
+        self.ws_messages = []
+        self.ws_connected = False
+        
         self.test_results = {
-            "upload": {"passed": False, "error": None},
-            "list_files": {"passed": False, "error": None},
-            "download": {"passed": False, "error": None},
-            "delete": {"passed": False, "error": None}
+            # Authentication tests
+            "guest_creation": {"passed": False, "error": None},
+            "user_registration": {"passed": False, "error": None},
+            "user_login": {"passed": False, "error": None},
+            "get_me": {"passed": False, "error": None},
+            
+            # File management tests
+            "file_upload": {"passed": False, "error": None},
+            "file_list": {"passed": False, "error": None},
+            "file_download": {"passed": False, "error": None},
+            "file_delete": {"passed": False, "error": None},
+            
+            # Guest limit tests
+            "guest_data_limit": {"passed": False, "error": None},
+            
+            # WebSocket tests
+            "websocket_connection": {"passed": False, "error": None}
         }
     
     def create_test_file(self, filename="test_file.txt", content="This is a test file for backend API testing."):
