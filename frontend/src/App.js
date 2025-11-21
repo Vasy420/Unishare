@@ -62,7 +62,8 @@ function App() {
   const [uploadProgress, setUploadProgress] = useState(null);
   const [downloadProgress, setDownloadProgress] = useState(null);
   const [dataLimitReached, setDataLimitReached] = useState(false);
-  const [driveConfigured, setDriveConfigured] = useState(false); // Default to false, only show if user has it connected
+  // Hide Google Drive button by default - Google Drive integration requires manual configuration
+  const [driveConfigured, setDriveConfigured] = useState(false);
 
   // Check auth and ask for guest username when needed
   useEffect(() => {
