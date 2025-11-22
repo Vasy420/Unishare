@@ -136,6 +136,19 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
             Copy Link
           </button>
           <button
+            onClick={() => setActiveTab('qr')}
+            className={`px-4 py-3 font-medium text-sm transition-colors border-b-2 ${
+              activeTab === 'qr'
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+            }`}
+          >
+            <span className="flex items-center space-x-2">
+              <QrCode className="w-4 h-4" />
+              <span>QR Code</span>
+            </span>
+          </button>
+          <button
             onClick={() => setActiveTab('p2p')}
             className={`px-4 py-3 font-medium text-sm transition-colors border-b-2 ${
               activeTab === 'p2p'
