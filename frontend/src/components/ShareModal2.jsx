@@ -205,6 +205,39 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
             </div>
           )}
 
+          {activeTab === 'qr' && (
+            <div className="space-y-6">
+              <div className="flex flex-col items-center">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-4">
+                  Scan QR Code to Download
+                </label>
+                <div ref={qrCodeRef} className="bg-white p-6 rounded-xl border-2 border-gray-200 dark:border-gray-600 shadow-lg">
+                  <QRCodeSVG
+                    value={shareUrl}
+                    size={256}
+                    level="H"
+                    includeMargin={true}
+                    bgColor="#ffffff"
+                    fgColor="#000000"
+                  />
+                </div>
+                <button
+                  onClick={handleDownloadQR}
+                  className="mt-6 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors duration-200 flex items-center space-x-2 shadow-lg hover:shadow-xl"
+                >
+                  <Download className="w-5 h-5" />
+                  <span>Download QR Code</span>
+                </button>
+              </div>
+
+              <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg p-4">
+                <p className="text-sm text-indigo-800 dark:text-indigo-200">
+                  <strong>Tip:</strong> Share this QR code in presentations, posters, or print materials for easy access to your file.
+                </p>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'p2p' && (
             <div className="space-y-4">
               <div>
