@@ -130,7 +130,7 @@ class UniShareBackendTester:
             timestamp = int(time.time())
             user_data = {
                 "username": f"TestUser_{timestamp}",
-                "email": f"testuser_{timestamp}@unishare.test",
+                "email": f"testuser_{timestamp}@example.com",
                 "password": "SecurePassword123!"
             }
             
