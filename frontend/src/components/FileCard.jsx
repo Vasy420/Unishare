@@ -21,6 +21,40 @@ const formatDate = (dateString) => {
 };
 
 const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, user }) => {
+  console.log('[FileCard] Rendered with props:', { 
+    fileName: file?.original_filename, 
+    hasOnShare: !!onShare, 
+    hasOnDownload: !!onDownload, 
+    hasOnDelete: !!onDelete 
+  });
+  
+  const handleShareClick = () => {
+    console.log('[FileCard] Share button clicked for file:', file?.original_filename);
+    if (onShare) {
+      onShare(file);
+    } else {
+      console.error('[FileCard] onShare is not defined!');
+    }
+  };
+  
+  const handleDownloadClick = () => {
+    console.log('[FileCard] Download button clicked for file:', file?.original_filename);
+    if (onDownload) {
+      onDownload(file);
+    } else {
+      console.error('[FileCard] onDownload is not defined!');
+    }
+  };
+  
+  const handleDeleteClick = () => {
+    console.log('[FileCard] Delete button clicked for file:', file?.original_filename);
+    if (onDelete) {
+      onDelete(file);
+    } else {
+      console.error('[FileCard] onDelete is not defined!');
+    }
+  };
+  
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 hover:shadow-lg transition-all duration-200">
       <div className="flex items-start justify-between mb-3">
