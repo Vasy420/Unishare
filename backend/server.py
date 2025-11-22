@@ -292,8 +292,9 @@ async def update_user_data_shared(user_id: str, file_size: int):
 # ============================================================================
 
 @api_router.post("/auth/guest", response_model=Token)
-async def create_guest(guest: GuestCreate):
-    """Create a guest user with username and emoji"""
+@limiter.limit("10/minute")
+async def create_guest(request: Request, guest: GuestCreate):
+    """Create a guest user with username and emoji - Rate limited to 10 per minute"""
     try:
         # Create guest user
         user = User(
