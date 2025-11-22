@@ -57,6 +57,7 @@ function App() {
   const [fileHistory, setFileHistory] = useState([]);
   const [showGuestModal, setShowGuestModal] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showLoginPage, setShowLoginPage] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showDrivePicker, setShowDrivePicker] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
