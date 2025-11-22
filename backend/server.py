@@ -328,8 +328,9 @@ async def create_guest(request: Request, guest: GuestCreate):
         raise HTTPException(status_code=500, detail=f"Guest creation failed: {str(e)}")
 
 @api_router.post("/auth/register", response_model=Token)
-async def register(user_create: UserCreate):
-    """Register a new user account"""
+@limiter.limit("5/minute")
+async def register(request: Request, user_create: UserCreate):
+    """Register a new user account - Rate limited to 5 per minute"""
     try:
         # Check if email already exists
         existing_user = await db.users.find_one({"email": user_create.email})
