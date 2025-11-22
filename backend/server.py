@@ -55,7 +55,18 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 GUEST_DATA_LIMIT = 2 * 1024 * 1024 * 1024  # 2GB
 
 # Create the main app
-app = FastAPI(title="UniShare API")
+app = FastAPI(
+    title="UniShare API",
+    description="Secure file sharing with P2P, WebRTC, and cloud integration",
+    version="2.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc"
+)
+
+# Rate limiting setup
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
