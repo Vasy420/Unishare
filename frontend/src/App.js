@@ -262,6 +262,7 @@ function App() {
   };
 
   const handleDownload = async (file) => {
+    console.log('[App] handleDownload called with file:', file);
     try {
       setDownloadProgress({ progress: 0, speed: 0, timeRemaining: 0, fileName: file.original_filename });
       
