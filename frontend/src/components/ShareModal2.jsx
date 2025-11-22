@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { X, Copy, Users, HardDrive, Check, Loader } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Copy, Users, HardDrive, Check, Loader, QrCode, Download } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import webrtcManager from '../utils/webrtcManager2';
 
 const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
