@@ -313,17 +313,17 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "1.1"
-  test_sequence: 1
+  version: "1.2"
+  test_sequence: 2
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Upload progress indicator with speed and time"
-    - "Download progress indicator with speed and time"
-    - "ShareModal component"
-    - "QR code generation and display"
-    - "Responsive design improvements"
+    - "Backend API endpoints verification"
+    - "Authentication system testing"
+    - "File operations testing"
+    - "WebSocket signaling testing"
+    - "All frontend features (pending user approval)"
   stuck_tasks: []
   test_all: true
   test_priority: "high_first"
