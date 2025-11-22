@@ -340,6 +340,8 @@ function App() {
   };
 
   const handleShare = (file) => {
+    console.log('[App] handleShare called with file:', file);
+    console.log('[App] Setting selectedFile and showShareModal to true');
     setSelectedFile(file);
     setShowShareModal(true);
   };
