@@ -54,13 +54,13 @@ SECRET_KEY="your-super-secret-jwt-key-change-in-production"
 # Google Drive OAuth (optional)
 GOOGLE_CLIENT_ID="your-google-client-id.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET="your-google-client-secret"
-GOOGLE_DRIVE_REDIRECT_URI="https://unishare-test.preview.emergentagent.com/api/drive/callback"
-FRONTEND_URL="https://unishare-test.preview.emergentagent.com"
+GOOGLE_DRIVE_REDIRECT_URI="https://button-repair-10.preview.emergentagent.com/api/drive/callback"
+FRONTEND_URL="https://button-repair-10.preview.emergentagent.com"
 ```
 
 ### Frontend (.env)
 ```bash
-REACT_APP_BACKEND_URL="https://unishare-test.preview.emergentagent.com"
+REACT_APP_BACKEND_URL="https://button-repair-10.preview.emergentagent.com"
 ```
 
 ## Google Drive Integration Setup
@@ -84,8 +84,8 @@ REACT_APP_BACKEND_URL="https://unishare-test.preview.emergentagent.com"
    - Go to "APIs & Services" → "Credentials"
    - Click "Create Credentials" → "OAuth client ID"
    - Application type: "Web application"
-   - Authorized JavaScript origins: `https://unishare-test.preview.emergentagent.com`
-   - Authorized redirect URIs: `https://unishare-test.preview.emergentagent.com/api/drive/callback`
+   - Authorized JavaScript origins: `https://button-repair-10.preview.emergentagent.com`
+   - Authorized redirect URIs: `https://button-repair-10.preview.emergentagent.com/api/drive/callback`
    - Copy Client ID and Client Secret
 
 6. **Update Backend .env**:
