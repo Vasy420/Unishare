@@ -75,6 +75,40 @@ api_router = APIRouter(prefix="/api")
 security = HTTPBearer()
 
 # ============================================================================
+# Database Indexes and Startup Configuration
+# ============================================================================
+
+@app.on_event("startup")
+async def startup_event():
+    """Create database indexes on startup for optimal performance"""
+    try:
+        # User collection indexes
+        await db.users.create_index("id", unique=True)
+        await db.users.create_index("email", unique=True, sparse=True)
+        await db.users.create_index("username")
+        await db.users.create_index([("is_guest", 1), ("created_date", -1)])
+        
+        # Files collection indexes
+        await db.files.create_index("id", unique=True)
+        await db.files.create_index([("owner_id", 1), ("upload_date", -1)])
+        await db.files.create_index([("is_public", 1), ("upload_date", -1)])
+        await db.files.create_index("drive_file_id", sparse=True)
+        
+        logger.info("✅ Database indexes created successfully")
+        logger.info("✅ UniShare API started - Windows Compatible Mode")
+    except Exception as e:
+        logger.warning(f"⚠️ Index creation warning: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    try:
+        client.close()
+        logger.info("✅ Database connection closed")
+    except Exception as e:
+        logger.error(f"Error during shutdown: {e}")
+
+# ============================================================================
 # WebSocket Connection Manager for WebRTC Signaling
 # ============================================================================
 class ConnectionManager:
