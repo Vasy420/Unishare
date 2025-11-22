@@ -545,11 +545,13 @@ async def google_auth_callback(code: str = Query(...), state: str = Query(None))
 # ============================================================================
 
 @api_router.post("/upload", response_model=FileResponse)
+@limiter.limit("30/minute")
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user)
 ):
-    """Upload a file"""
+    """Upload a file - Rate limited to 30 uploads per minute"""
     try:
         # Check data limit
         file_size = 0
