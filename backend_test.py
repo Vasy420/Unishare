@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-UniShare6 Backend API Testing Script
-Tests WebSocket signaling, Google Drive integration, and core file operations
-Focus on WebSocket P2P functionality and Google OAuth integration
+UNISHARE2 COMPREHENSIVE BACKEND TESTING SCRIPT
+Tests ALL backend functionality EXCEPT Google Drive integration
+Heavy focus on WebRTC/P2P features as requested in review
 """
 
 import requests
