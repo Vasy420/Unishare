@@ -614,7 +614,7 @@ agent_communication:
       **1. Google Drive Integration:**
       - Added Google OAuth credentials to backend .env
       - Client ID: 1775457860-31es87hqmlreoupbqa50gkvm2taib26t.apps.googleusercontent.com
-      - Redirect URI: https://smart-notes-hub-2.preview.emergentagent.com/api/drive/callback
+      - Redirect URI: https://unishare2-debug.preview.emergentagent.com/api/drive/callback
       - Enabled Google Drive in frontend (driveConfigured = true)
       - Backend restarted to apply credentials
       
