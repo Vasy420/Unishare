@@ -334,14 +334,17 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Backend API endpoints verification"
-    - "Authentication system testing"
-    - "File operations testing"
-    - "WebSocket signaling testing"
-    - "All frontend features (pending user approval)"
-  stuck_tasks: []
-  test_all: true
-  test_priority: "high_first"
+    - "Share button and ShareModal functionality"
+    - "Download button and file download flow"
+    - "Delete button and file deletion"
+    - "Login button for guest users"
+    - "All button click handlers and event propagation"
+  stuck_tasks:
+    - "ShareModal component"
+    - "Download progress indicator with speed and time"
+    - "UI components rendering"
+  test_all: false
+  test_priority: "stuck_first"
 
 agent_communication:
   - agent: "main"
