@@ -624,7 +624,7 @@ function App() {
               </div>
 
               {files.length === 0 ? (
-                <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+                <div className="text-center py-12 bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 shadow-sm">
                   <UploadIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                   <p className="text-gray-600 dark:text-gray-400">No files yet</p>
                   <p className="text-sm text-gray-500 dark:text-gray-500 mt-1">
