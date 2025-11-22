@@ -465,19 +465,29 @@ function App() {
               {user && (
                 <>
                   {user.is_guest && (
-                    <button
-                      onClick={() => setShowHistory(!showHistory)}
-                      className="p-2 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                      title="File History"
-                    >
-                      <History className="w-5 h-5" />
-                    </button>
+                    <>
+                      <button
+                        onClick={() => setShowHistory(!showHistory)}
+                        className="p-2 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                        title="File History"
+                      >
+                        <History className="w-5 h-5" />
+                      </button>
+                      <button
+                        onClick={() => setShowLoginPage(true)}
+                        className="hidden sm:flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 text-white rounded-lg transition-all shadow-md hover:shadow-lg"
+                        title="Login to Access Everywhere"
+                      >
+                        <LogIn className="w-4 h-4" />
+                        <span className="text-sm font-medium">Login</span>
+                      </button>
+                    </>
                   )}
                   
                   {driveConfigured && !user.google_drive_connected ? (
                     <button
                       onClick={handleConnectDrive}
-                      className="hidden sm:flex items-center space-x-2 px-4 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+                      className="hidden sm:flex items-center space-x-2 px-4 py-2 bg-white dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors"
                     >
                       <HardDrive className="w-4 h-4" />
                       <span className="text-sm">Connect Drive</span>
@@ -492,7 +502,7 @@ function App() {
                     </button>
                   ) : null}
 
-                  <div className="flex items-center space-x-2 px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg">
+                  <div className="flex items-center space-x-2 px-3 py-2 bg-gray-100 dark:bg-slate-700 rounded-lg">
                     <span className="text-xl">{user.emoji}</span>
                     <span className="text-sm font-medium text-gray-900 dark:text-white">
                       {user.username}
