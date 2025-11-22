@@ -247,15 +247,18 @@ frontend:
   
   - task: "Download progress indicator with speed and time"
     implemented: true
-    working: "NA"
+    working: false
     file: "/app/frontend/src/App.js"
-    stuck_count: 0
+    stuck_count: 1
     priority: "high"
     needs_retesting: true
     status_history:
       - working: "NA"
         agent: "main"
         comment: "Implemented download progress tracking with axios onDownloadProgress. Shows percentage, download speed, and time remaining. Files download as blob with proper filename."
+      - working: false
+        agent: "user"
+        comment: "USER FEEDBACK: Download button appears to work but action doesn't complete. Button clicks but file download does not start or complete."
   
   - task: "ShareModal component"
     implemented: true
