@@ -325,6 +325,7 @@ function App() {
   };
 
   const handleDelete = async (file) => {
+    console.log('[App] handleDelete called with file:', file);
     if (!window.confirm('Are you sure you want to delete this file?')) return;
 
     try {
