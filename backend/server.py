@@ -373,8 +373,9 @@ async def register(request: Request, user_create: UserCreate):
         raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
 @api_router.post("/auth/login", response_model=Token)
-async def login(user_login: UserLogin):
-    """Login with email and password"""
+@limiter.limit("10/minute")
+async def login(request: Request, user_login: UserLogin):
+    """Login with email and password - Rate limited to 10 per minute"""
     try:
         # Find user by email
         user_doc = await db.users.find_one({"email": user_login.email}, {"_id": 0})
