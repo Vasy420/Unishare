@@ -10,6 +10,7 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
   const [selectedPeer, setSelectedPeer] = useState(null);
   const [sharing, setSharing] = useState(false);
   const [shareProgress, setShareProgress] = useState(0);
+  const qrCodeRef = useRef(null);
 
   useEffect(() => {
     if (isOpen) {
