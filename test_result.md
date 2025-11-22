@@ -216,6 +216,9 @@ backend:
       - working: true
         agent: "testing"
         comment: "VERIFIED: WebSocket signaling endpoint fully functional after dependency fixes. ✅ Single WebSocket connections work perfectly - connection establishes, receives online_users broadcasts, update_info messages work correctly. ✅ Online users tracking via GET /api/online-users endpoint working. ✅ WebRTC signaling messages (offer, answer, ICE candidates) are properly handled by backend. ⚠️ Minor issue: Concurrent multiple WebSocket connections have timing issues, but single connections and core P2P signaling functionality is operational. WebSocket P2P functionality is ready for production use."
+      - working: true
+        agent: "testing"
+        comment: "RE-VERIFIED: WebSocket endpoint /api/ws/{user_id} tested and confirmed working. Connection establishes successfully, receives messages correctly. Basic WebSocket functionality operational for P2P signaling. GET /api/online-users endpoint also verified working and returns proper JSON structure."
   
   - task: "Online users endpoint"
     implemented: true
