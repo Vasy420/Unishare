@@ -1087,18 +1087,88 @@ async def save_to_drive(file_id: str, current_user: User = Depends(get_current_u
 # Include API router
 app.include_router(api_router)
 
-# CORS middleware
+# ============================================================================
+# Middleware Configuration
+# ============================================================================
+
+# Security Headers Middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    
+    # Security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    
+    # Add processing time header
+    process_time = time.time() - start_time
+    response.headers["X-Process-Time"] = str(process_time)
+    
+    # Cache control for API responses (no caching)
+    if request.url.path.startswith("/api"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    
+    return response
+
+# GZip compression for responses larger than 1KB
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# CORS middleware - Configure based on deployment
+# For production, replace "*" with your actual frontend domain
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS != ["*"] else ["*"],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["X-Process-Time"],
+    max_age=3600,
 )
+
+# ============================================================================
+# Health Check and Root Endpoints
+# ============================================================================
 
 @app.get("/")
 async def root():
-    return {"message": "UniShare API - File Sharing Made Simple"}
+    return {
+        "message": "UniShare API - File Sharing Made Simple",
+        "version": "2.0.0",
+        "status": "operational",
+        "features": [
+            "File Upload/Download",
+            "WebRTC P2P Sharing",
+            "Google Drive Integration",
+            "User Authentication",
+            "Rate Limiting",
+            "Windows Compatible"
+        ]
+    }
+
+@app.get("/health")
+@limiter.limit("100/minute")
+async def health_check(request: Request):
+    """Health check endpoint for monitoring"""
+    try:
+        # Check MongoDB connection
+        await db.command("ping")
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "database": "connected",
+            "version": "2.0.0"
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        raise HTTPException(status_code=503, detail="Service unavailable")
 
 if __name__ == "__main__":
     import uvicorn
