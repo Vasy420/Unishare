@@ -85,7 +85,7 @@ const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, user }) 
 
       <div className="flex items-center space-x-2">
         <button
-          onClick={() => onShare(file)}
+          onClick={handleShareClick}
           className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 flex items-center justify-center space-x-1"
         >
           <Share2 className="w-4 h-4" />
@@ -104,14 +104,14 @@ const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, user }) 
         )}
         
         <button
-          onClick={() => onDownload(file)}
+          onClick={handleDownloadClick}
           className="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 p-2 rounded-lg transition-colors duration-200"
           title="Download"
         >
           <Download className="w-4 h-4" />
         </button>
         <button
-          onClick={() => onDelete(file)}
+          onClick={handleDeleteClick}
           className="bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 p-2 rounded-lg transition-colors duration-200"
           title="Delete"
         >
