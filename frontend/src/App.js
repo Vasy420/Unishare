@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import { Moon, Sun, LogOut, User, Upload as UploadIcon, HardDrive, History } from 'lucide-react';
+import { Moon, Sun, LogOut, User, Upload as UploadIcon, HardDrive, History, LogIn } from 'lucide-react';
 import { useTheme } from './contexts/ThemeContext';
 import { useAuth } from './contexts/AuthContext';
 import GuestModal from './components/GuestModal';
 import AuthModal from './components/AuthModal';
+import LoginPage from './components/LoginPage';
 import UploadZone from './components/UploadZone';
 import FileCard from './components/FileCard';
 import ProgressIndicator from './components/ProgressIndicator';
