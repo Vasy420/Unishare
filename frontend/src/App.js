@@ -115,8 +115,8 @@ function App() {
   // Check auth and ask for guest username when needed
   useEffect(() => {
     if (!authLoading && !user && !showWelcome) {
-      // No user logged in, show guest modal
-      setShowGuestModal(true);
+      // No user logged in, show login page
+      setShowLoginPage(true);
     }
   }, [authLoading, user, showWelcome]);
 
