@@ -1,8 +1,12 @@
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Query
-from fastapi.responses import FileResponse as FastAPIFileResponse, RedirectResponse
+from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Query, Request
+from fastapi.responses import FileResponse as FastAPIFileResponse, RedirectResponse, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Dict
@@ -22,6 +26,7 @@ import shutil
 import io
 import json
 import requests
+import time
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
