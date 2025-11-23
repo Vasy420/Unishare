@@ -988,3 +988,45 @@ agent_communication:
       - No errors in backend logs
       
       **Ready for comprehensive backend testing to verify all endpoints still work correctly with new security features.**
+  
+  - agent: "main"
+    message: |
+      🔧 **USER REPORTED ISSUES - REDIRECT AND BUTTON FIXES**
+      
+      **Issues Reported:**
+      1. Google OAuth login not redirecting correctly
+      2. Google Drive connection not redirecting correctly
+      3. File action buttons not working (Share, Download, Delete)
+      
+      **Root Cause Analysis:**
+      1. **Google OAuth Redirect Issue**: After successful Google authentication, the frontend was handling the redirect but not explicitly closing the login page (setShowLoginPage(false))
+      2. **Google Drive Redirect Issue**: Backend was redirecting with `drive_connected=true` parameter, but frontend had NO handler for this parameter at all
+      3. **Button Issues**: Need to verify if buttons are actually not working or if it's a UI state issue
+      
+      **Fixes Applied:**
+      
+      **1. Fixed Google OAuth Redirect Flow:**
+      - Added `setShowLoginPage(false)` after successful Google authentication
+      - This ensures the user is properly transitioned to the main app after login
+      - Updated useEffect dependencies to include setToken, setUser, and token
+      
+      **2. Added Google Drive Connection Redirect Handler:**
+      - Added handler for `drive_connected=true` parameter in the same useEffect
+      - After successful Drive connection, frontend now:
+         * Refreshes user data to get updated google_drive_connected status
+         * Shows success alert to user
+         * Cleans up the URL
+      - Added handler for `drive_error=true` parameter with error alert
+      
+      **Files Modified:**
+      - /app/frontend/src/App.js: Fixed OAuth and Drive redirect handling
+      
+      **Services Restarted:**
+      - Backend: ✅ RUNNING
+      - Frontend: ✅ RUNNING
+      - MongoDB: ✅ RUNNING
+      
+      **Next Steps:**
+      - User testing to verify redirects are working
+      - Test file action buttons (share, download, delete)
+      - If buttons still not working, may need deeper investigation into event handlers
