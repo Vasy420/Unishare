@@ -78,13 +78,16 @@ function App() {
     }
   }, []);
 
-  // Handle Google OAuth callback
+  // Handle Google OAuth callback and Google Drive connection callback
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const googleAuth = urlParams.get('google_auth');
     const tokenParam = urlParams.get('token');
     const googleDrivePrompt = urlParams.get('google_drive_prompt');
+    const driveConnected = urlParams.get('drive_connected');
+    const driveError = urlParams.get('drive_error');
     
+    // Handle Google OAuth callback
     if (googleAuth === 'success' && tokenParam) {
       // Save token and fetch user info
       localStorage.setItem('token', tokenParam);
@@ -95,6 +98,7 @@ function App() {
         headers: { Authorization: `Bearer ${tokenParam}` }
       }).then(response => {
         setUser(response.data);
+        setShowLoginPage(false); // Close login page
         
         // Show Google Drive connection prompt if needed
         if (googleDrivePrompt === 'true' && !response.data.google_drive_connected) {
@@ -102,6 +106,7 @@ function App() {
         }
       }).catch(error => {
         console.error('Failed to fetch user info:', error);
+        setShowLoginPage(false);
       });
       
       // Clean up URL
@@ -110,7 +115,28 @@ function App() {
       alert('Google authentication failed. Please try again.');
       window.history.replaceState({}, document.title, window.location.pathname);
     }
-  }, []);
+    
+    // Handle Google Drive connection callback
+    if (driveConnected === 'true') {
+      // Refresh user data to get updated google_drive_connected status
+      if (token) {
+        axios.get(`${API}/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` }
+        }).then(response => {
+          setUser(response.data);
+          alert('Google Drive connected successfully!');
+        }).catch(error => {
+          console.error('Failed to refresh user info:', error);
+        });
+      }
+      
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (driveError === 'true') {
+      alert('Failed to connect Google Drive. Please try again.');
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [setToken, setUser, token]);
 
   // Check auth and ask for guest username when needed
   useEffect(() => {
