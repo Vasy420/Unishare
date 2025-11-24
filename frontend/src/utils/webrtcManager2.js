@@ -16,11 +16,21 @@ class WebRTCManager {
     this.maxReconnectAttempts = 5;
   }
 
-  connect(userId, backendUrl) {
+  connect(userId, backendUrl, username = null, emoji = null) {
     this.userId = userId;
     const wsUrl = backendUrl.replace('https://', 'wss://').replace('http://', 'ws://');
-    
-    this.ws = new WebSocket(`${wsUrl}/api/ws/${userId}`);
+
+    // Add query parameters for username and emoji if provided
+    let url = `${wsUrl}/api/ws/${userId}`;
+    const params = new URLSearchParams();
+    if (username) params.append('username', username);
+    if (emoji) params.append('emoji', emoji);
+
+    if (params.toString()) {
+      url += `?${params.toString()}`;
+    }
+
+    this.ws = new WebSocket(url);
 
     this.ws.onopen = () => {
       console.log('WebSocket connected');
@@ -38,15 +48,15 @@ class WebRTCManager {
             this.onOnlineUsersChange(this.onlineUsers);
           }
           break;
-        
+
         case 'offer':
           await this.handleOffer(data.sender, data.offer);
           break;
-        
+
         case 'answer':
           await this.handleAnswer(data.sender, data.answer);
           break;
-        
+
         case 'ice-candidate':
           await this.handleIceCandidate(data.sender, data.candidate);
           break;
@@ -108,7 +118,7 @@ class WebRTCManager {
         console.error(`❌ ICE connection ${peerConnection.iceConnectionState} with ${peerId}`);
       }
     };
-    
+
     peerConnection.onconnectionstatechange = () => {
       console.log(`🔄 Connection state with ${peerId}:`, peerConnection.connectionState);
     };
@@ -155,7 +165,7 @@ class WebRTCManager {
     // Parse message
     if (typeof data === 'string') {
       const message = JSON.parse(data);
-      
+
       if (message.type === 'file-metadata') {
         // Initialize file reception
         this.receivingFiles.set(message.fileId, {
@@ -166,7 +176,7 @@ class WebRTCManager {
           receivedSize: 0,
           totalChunks: message.totalChunks
         });
-        
+
         // Notify about starting to receive
         if (this.onProgressUpdate) {
           this.onProgressUpdate({
@@ -188,12 +198,12 @@ class WebRTCManager {
           for (let i = 0; i < binaryString.length; i++) {
             bytes[i] = binaryString.charCodeAt(i);
           }
-          
+
           fileInfo.chunks[message.index] = bytes;
           fileInfo.receivedSize += bytes.length;
-          
+
           const progress = (fileInfo.receivedSize / fileInfo.size) * 100;
-          
+
           // Update progress
           if (this.onProgressUpdate) {
             this.onProgressUpdate({
@@ -205,19 +215,19 @@ class WebRTCManager {
               timeRemaining: 0
             });
           }
-          
+
           // Check if all chunks received
           if (message.index === message.totalChunks - 1) {
             // Reconstruct file from all chunks
             const blob = new Blob(fileInfo.chunks, { type: fileInfo.type });
-            
+
             console.log('File received via P2P:', fileInfo.name, 'Size:', blob.size);
-            
+
             // Trigger file received callback
             if (this.onFileReceived) {
               this.onFileReceived(fileInfo.name, blob, peerId);
             }
-            
+
             // Clean up
             this.receivingFiles.delete(message.fileId);
           }
@@ -231,7 +241,7 @@ class WebRTCManager {
 
   async sendFile(peerId, file, onProgress) {
     const dataChannel = this.dataChannels.get(peerId);
-    
+
     if (!dataChannel || dataChannel.readyState !== 'open') {
       throw new Error('Data channel not ready');
     }
@@ -239,7 +249,7 @@ class WebRTCManager {
     const fileId = Math.random().toString(36).substr(2, 9);
     const CHUNK_SIZE = 16384; // 16KB chunks
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-    
+
     // Send file metadata
     dataChannel.send(JSON.stringify({
       type: 'file-metadata',
@@ -264,7 +274,7 @@ class WebRTCManager {
     reader.onload = (event) => {
       const chunk = event.target.result;
       const chunkData = btoa(String.fromCharCode(...new Uint8Array(chunk)));
-      
+
       // Send chunk
       dataChannel.send(JSON.stringify({
         type: 'file-chunk',
@@ -309,7 +319,7 @@ class WebRTCManager {
   async initiateConnection(peerId) {
     try {
       const peerConnection = await this.createPeerConnection(peerId, true);
-      
+
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
 
@@ -330,9 +340,9 @@ class WebRTCManager {
   async handleOffer(peerId, offer) {
     try {
       const peerConnection = await this.createPeerConnection(peerId, false);
-      
+
       await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-      
+
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
 
@@ -377,7 +387,7 @@ class WebRTCManager {
       peerConnection.close();
       this.peers.delete(peerId);
     }
-    
+
     const dataChannel = this.dataChannels.get(peerId);
     if (dataChannel) {
       dataChannel.close();

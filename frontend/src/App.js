@@ -52,7 +52,7 @@ const addToFileHistory = (file) => {
 function App() {
   const { theme, toggleTheme } = useTheme();
   const { user, token, loading: authLoading, loginAsGuest, register, login, logout, setToken, setUser } = useAuth();
-  
+
   const [files, setFiles] = useState([]);
   const [fileHistory, setFileHistory] = useState([]);
   const [showGuestModal, setShowGuestModal] = useState(false);
@@ -86,20 +86,20 @@ function App() {
     const googleDrivePrompt = urlParams.get('google_drive_prompt');
     const driveConnected = urlParams.get('drive_connected');
     const driveError = urlParams.get('drive_error');
-    
+
     // Handle Google OAuth callback
     if (googleAuth === 'success' && tokenParam) {
       // Save token and fetch user info
       localStorage.setItem('token', tokenParam);
       setToken(tokenParam);
-      
+
       // Fetch user info
       axios.get(`${API}/auth/me`, {
         headers: { Authorization: `Bearer ${tokenParam}` }
       }).then(response => {
         setUser(response.data);
         setShowLoginPage(false); // Close login page
-        
+
         // Show Google Drive connection prompt if needed
         if (googleDrivePrompt === 'true' && !response.data.google_drive_connected) {
           setShowDriveConnectModal(true);
@@ -108,14 +108,14 @@ function App() {
         console.error('Failed to fetch user info:', error);
         setShowLoginPage(false);
       });
-      
+
       // Clean up URL
       window.history.replaceState({}, document.title, window.location.pathname);
     } else if (googleAuth === 'error') {
       alert('Google authentication failed. Please try again.');
       window.history.replaceState({}, document.title, window.location.pathname);
     }
-    
+
     // Handle Google Drive connection callback
     if (driveConnected === 'true') {
       // Refresh user data to get updated google_drive_connected status
@@ -129,7 +129,7 @@ function App() {
           console.error('Failed to refresh user info:', error);
         });
       }
-      
+
       // Clean up URL
       window.history.replaceState({}, document.title, window.location.pathname);
     } else if (driveError === 'true') {
@@ -152,9 +152,9 @@ function App() {
       fetchFiles();
       loadFileHistory();
       // Connect to WebRTC
-      webrtcManager.connect(user.id, BACKEND_URL);
+      webrtcManager.connect(user.id, BACKEND_URL, user.username, user.emoji);
       webrtcManager.updateUserInfo(user.username, user.emoji);
-      
+
       // Handle received files via P2P
       webrtcManager.onFileReceived = (filename, blob) => {
         const url = URL.createObjectURL(blob);
@@ -184,7 +184,7 @@ function App() {
 
   const fetchFiles = async () => {
     if (!user || !token) return;
-    
+
     try {
       const response = await axios.get(`${API}/files`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -211,7 +211,7 @@ function App() {
     } else {
       result = await login(emailOrUsername, passwordOrEmail);
     }
-    
+
     if (result.success) {
       setShowAuthModal(false);
     } else {
@@ -247,31 +247,31 @@ function App() {
           const loaded = progressEvent.loaded;
           const total = progressEvent.total;
           const percentage = Math.round((loaded * 100) / total);
-          
+
           const bytesUploaded = loaded - lastLoaded;
           const speed = timeElapsed > 0 ? bytesUploaded / timeElapsed : 0;
-          
+
           const bytesRemaining = total - loaded;
           const timeRemaining = speed > 0 ? bytesRemaining / speed : 0;
-          
+
           setUploadProgress({
             progress: percentage,
             speed: speed,
             timeRemaining: timeRemaining,
             fileName: file.name
           });
-          
+
           lastLoaded = loaded;
           lastTime = currentTime;
         }
       });
 
       await fetchFiles();
-      
+
       setTimeout(() => {
         setUploadProgress(null);
       }, 2000);
-      
+
       setDataLimitReached(false);
     } catch (error) {
       console.error('Upload failed:', error);
@@ -291,13 +291,13 @@ function App() {
     console.log('[App] handleDownload called with file:', file);
     try {
       setDownloadProgress({ progress: 0, speed: 0, timeRemaining: 0, fileName: file.original_filename });
-      
+
       const downloadUrl = `${BACKEND_URL}${file.download_url}`;
-      
+
       const startTime = Date.now();
       let lastLoaded = 0;
       let lastTime = startTime;
-      
+
       const response = await axios.get(downloadUrl, {
         responseType: 'blob',
         onDownloadProgress: (progressEvent) => {
@@ -306,25 +306,25 @@ function App() {
           const loaded = progressEvent.loaded;
           const total = progressEvent.total || progressEvent.loaded;
           const percentage = total > 0 ? Math.round((loaded * 100) / total) : 100;
-          
+
           const bytesDownloaded = loaded - lastLoaded;
           const speed = timeElapsed > 0 ? bytesDownloaded / timeElapsed : 0;
-          
+
           const bytesRemaining = total - loaded;
           const timeRemaining = speed > 0 ? bytesRemaining / speed : 0;
-          
+
           setDownloadProgress({
             progress: percentage,
             speed: speed,
             timeRemaining: timeRemaining,
             fileName: file.original_filename
           });
-          
+
           lastLoaded = loaded;
           lastTime = currentTime;
         }
       });
-      
+
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -333,13 +333,13 @@ function App() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
-      
+
       // Add to history for guests
       if (user?.is_guest) {
         addToFileHistory(file);
         loadFileHistory();
       }
-      
+
       setTimeout(() => {
         setDownloadProgress(null);
       }, 2000);
@@ -381,7 +381,7 @@ function App() {
     } catch (error) {
       console.error('Failed to connect Drive:', error);
       const errorMsg = error.response?.data?.detail || 'Failed to connect Google Drive';
-      
+
       // If Google Drive is not configured, hide the button
       if (errorMsg.includes('not configured')) {
         setDriveConfigured(false);
@@ -472,7 +472,7 @@ function App() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900 relative overflow-hidden">
       {/* Animated background */}
-      <div className="absolute inset-0 overflow-hidden opacity-20">
+      <div className="absolute inset-0 overflow-hidden opacity-20 pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-300 dark:bg-blue-800 rounded-full mix-blend-multiply dark:mix-blend-soft-light filter blur-xl animate-blob"></div>
         <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-slate-300 dark:bg-slate-700 rounded-full mix-blend-multiply dark:mix-blend-soft-light filter blur-xl animate-blob animation-delay-2000"></div>
         <div className="absolute bottom-1/4 left-1/3 w-96 h-96 bg-indigo-300 dark:bg-indigo-800 rounded-full mix-blend-multiply dark:mix-blend-soft-light filter blur-xl animate-blob animation-delay-4000"></div>
@@ -513,7 +513,7 @@ function App() {
                       </button>
                     </>
                   )}
-                  
+
                   {driveConfigured && !user.google_drive_connected ? (
                     <button
                       onClick={handleConnectDrive}
@@ -568,7 +568,7 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10">
         {user && (
           <>
             {/* Data Limit Warning */}
@@ -627,7 +627,7 @@ function App() {
                       key={`history-${idx}`}
                       file={file}
                       onDownload={handleDownload}
-                      onDelete={() => {}}
+                      onDelete={() => { }}
                       onShare={handleShare}
                       onSaveToDrive={handleSaveToDrive}
                       user={user}
@@ -705,7 +705,7 @@ function App() {
       {/* Modals */}
       <GuestModal
         isOpen={showGuestModal && !user}
-        onClose={() => {}}
+        onClose={() => { }}
         onSubmit={handleGuestLogin}
       />
 

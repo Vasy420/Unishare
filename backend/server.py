@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Query, Request
 from fastapi.responses import FileResponse as FastAPIFileResponse, RedirectResponse, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / '.env', override=True)
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -54,33 +55,14 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 # Guest data limit (2GB in bytes)
 GUEST_DATA_LIMIT = 2 * 1024 * 1024 * 1024  # 2GB
 
-# Create the main app
-app = FastAPI(
-    title="UniShare API",
-    description="Secure file sharing with P2P, WebRTC, and cloud integration",
-    version="2.0.0",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc"
-)
-
-# Rate limiting setup
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
-
-# Security
-security = HTTPBearer()
-
 # ============================================================================
 # Database Indexes and Startup Configuration
 # ============================================================================
 
-@app.on_event("startup")
-async def startup_event():
-    """Create database indexes on startup for optimal performance"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifecycle manager for the FastAPI app"""
+    # Startup
     try:
         # User collection indexes
         await db.users.create_index("id", unique=True)
@@ -98,15 +80,38 @@ async def startup_event():
         logger.info("✅ UniShare API started - Windows Compatible Mode")
     except Exception as e:
         logger.warning(f"⚠️ Index creation warning: {e}")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
+    
+    yield
+    
+    # Shutdown
     try:
         client.close()
         logger.info("✅ Database connection closed")
     except Exception as e:
         logger.error(f"Error during shutdown: {e}")
+
+# Create the main app
+app = FastAPI(
+    title="UniShare API",
+    description="Secure file sharing with P2P, WebRTC, and cloud integration",
+    version="2.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    lifespan=lifespan
+)
+
+# Rate limiting setup
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Create a router with the /api prefix
+api_router = APIRouter(prefix="/api")
+
+# Security
+security = HTTPBearer()
+
+
 
 # ============================================================================
 # WebSocket Connection Manager for WebRTC Signaling
@@ -338,6 +343,8 @@ async def create_guest(request: Request, guest: GuestCreate):
         )
         
         doc = user.model_dump()
+        if doc.get('email') is None:
+            del doc['email']
         doc['created_date'] = doc['created_date'].isoformat()
         await db.users.insert_one(doc)
         
@@ -464,7 +471,8 @@ async def google_auth():
     try:
         client_id = os.getenv("GOOGLE_CLIENT_ID")
         client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
-        redirect_uri = f"{os.getenv('REACT_APP_BACKEND_URL', os.getenv('FRONTEND_URL', ''))}/api/auth/google/callback"
+        backend_url = os.getenv('BACKEND_URL', 'http://localhost:8001')
+        redirect_uri = f"{backend_url}/api/auth/google/callback"
         
         if not client_id or not client_secret:
             raise HTTPException(
@@ -511,8 +519,9 @@ async def google_auth_callback(code: str = Query(...), state: str = Query(None))
     try:
         client_id = os.getenv("GOOGLE_CLIENT_ID")
         client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
-        redirect_uri = f"{os.getenv('REACT_APP_BACKEND_URL', os.getenv('FRONTEND_URL', ''))}/api/auth/google/callback"
-        frontend_url = os.getenv('FRONTEND_URL', os.getenv('REACT_APP_BACKEND_URL', ''))
+        backend_url = os.getenv('BACKEND_URL', 'http://localhost:8001')
+        redirect_uri = f"{backend_url}/api/auth/google/callback"
+        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
         
         flow = Flow.from_client_config(
             {
@@ -764,9 +773,14 @@ async def delete_file(file_id: str, current_user: User = Depends(get_current_use
 # ============================================================================
 
 @app.websocket("/api/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: str):
+async def websocket_endpoint(
+    websocket: WebSocket, 
+    user_id: str,
+    username: str = Query(None),
+    emoji: str = Query(None)
+):
     """WebSocket endpoint for WebRTC signaling"""
-    await manager.connect(user_id, websocket)
+    await manager.connect(user_id, websocket, username, emoji)
     
     try:
         while True:
@@ -799,6 +813,17 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                     "candidate": data.get("candidate"),
                     "sender": user_id
                 })
+            
+            elif message_type == "update_info":
+                # Update user info
+                username = data.get("username")
+                emoji = data.get("emoji")
+                if user_id in manager.user_info:
+                    if username:
+                        manager.user_info[user_id]["username"] = username
+                    if emoji:
+                        manager.user_info[user_id]["emoji"] = emoji
+                    await manager.broadcast_online_users()
             
             elif message_type == "update_info":
                 # Update user info
