@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env', override=True)
+load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -77,6 +77,7 @@ async def lifespan(app: FastAPI):
         await db.files.create_index("drive_file_id", sparse=True)
         
         logger.info("✅ Database indexes created successfully")
+        logger.info(f"✅ Configured BACKEND_URL: {os.getenv('BACKEND_URL')}")
         logger.info("✅ UniShare API started - Windows Compatible Mode")
     except Exception as e:
         logger.warning(f"⚠️ Index creation warning: {e}")
