@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Query, Request
+from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Query, Request, Form
 from fastapi.responses import FileResponse as FastAPIFileResponse, RedirectResponse, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
@@ -27,7 +27,13 @@ import shutil
 import io
 import json
 import requests
+import requests
 import time
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.backends import default_backend
+import base64
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -50,7 +56,91 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
 ALGORITHM = "HS256"
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
+ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+
+# Encryption Keys Setup
+KEYS_DIR = ROOT_DIR / "keys"
+KEYS_DIR.mkdir(exist_ok=True)
+PRIVATE_KEY_PATH = KEYS_DIR / "private_key.pem"
+PUBLIC_KEY_PATH = KEYS_DIR / "public_key.pem"
+
+def generate_keys():
+    if not PRIVATE_KEY_PATH.exists() or not PUBLIC_KEY_PATH.exists():
+        logger.info("Generating new RSA keys...")
+        private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=2048,
+            backend=default_backend()
+        )
+        public_key = private_key.public_key()
+
+        with open(PRIVATE_KEY_PATH, "wb") as f:
+            f.write(private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()
+            ))
+
+        with open(PUBLIC_KEY_PATH, "wb") as f:
+            f.write(public_key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            ))
+        logger.info("RSA keys generated successfully")
+
+generate_keys()
+
+def load_private_key():
+    with open(PRIVATE_KEY_PATH, "rb") as f:
+        return serialization.load_pem_private_key(
+            f.read(),
+            password=None,
+            backend=default_backend()
+        )
+
+def load_public_key():
+    with open(PUBLIC_KEY_PATH, "rb") as f:
+        return serialization.load_pem_public_key(
+            f.read(),
+            backend=default_backend()
+        )
+
+server_private_key = load_private_key()
+server_public_key = load_public_key()
+
+def encrypt_file_content(content: bytes) -> tuple[bytes, bytes]:
+    """Encrypt content with a random AES key, then encrypt the AES key with RSA"""
+    key = Fernet.generate_key()
+    f = Fernet(key)
+    encrypted_content = f.encrypt(content)
+    
+    encrypted_key = server_public_key.encrypt(
+        key,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+    return encrypted_content, base64.b64encode(encrypted_key)
+
+def decrypt_file_content(encrypted_content: bytes, encrypted_key_b64: bytes) -> bytes:
+    """Decrypt the AES key with RSA, then decrypt content with AES"""
+    encrypted_key = base64.b64decode(encrypted_key_b64)
+    
+    key = server_private_key.decrypt(
+        encrypted_key,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+    
+    f = Fernet(key)
+    return f.decrypt(encrypted_content)
 
 # Guest data limit (2GB in bytes)
 GUEST_DATA_LIMIT = 2 * 1024 * 1024 * 1024  # 2GB
@@ -74,7 +164,14 @@ async def lifespan(app: FastAPI):
         await db.files.create_index("id", unique=True)
         await db.files.create_index([("owner_id", 1), ("upload_date", -1)])
         await db.files.create_index([("is_public", 1), ("upload_date", -1)])
+        await db.files.create_index([("is_public", 1), ("upload_date", -1)])
         await db.files.create_index("drive_file_id", sparse=True)
+        
+        # History collection indexes
+        await db.history.create_index([("user_id", 1), ("timestamp", -1)])
+        
+        # History collection indexes
+        await db.history.create_index([("user_id", 1), ("timestamp", -1)])
         
         logger.info("✅ Database indexes created successfully")
         logger.info(f"✅ Configured BACKEND_URL: {os.getenv('BACKEND_URL')}")
@@ -196,6 +293,9 @@ class User(BaseModel):
     google_drive_connected: bool = False
     google_id: Optional[str] = None  # Google OAuth ID
     created_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    drive_access_token: Optional[str] = None
+    drive_refresh_token: Optional[str] = None
+    google_access_token: Optional[str] = None
 
 class UserResponse(BaseModel):
     id: str
@@ -243,7 +343,24 @@ class FileResponse(BaseModel):
     owner_type: str
     is_public: bool
     source: str
+    source: str
     drive_file_id: Optional[str] = None
+    shared_with_users: List[str] = []
+
+class HistoryResponse(BaseModel):
+    id: str
+    action: str
+    file_name: str
+    timestamp: str
+    details: Optional[str]
+    shared_with_users: List[str] = []
+
+class HistoryResponse(BaseModel):
+    id: str
+    action: str
+    file_name: str
+    timestamp: str
+    details: Optional[str]
 
 class DriveFileInfo(BaseModel):
     id: str
@@ -326,6 +443,23 @@ async def update_user_data_shared(user_id: str, file_size: int):
         {"id": user_id},
         {"$inc": {"total_data_shared": file_size}}
     )
+
+async def log_history(user_id: str, action: str, file_name: str, file_id: str = None, details: str = None):
+    """Log user activity to history"""
+    try:
+        history_entry = {
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "action": action,
+            "file_name": file_name,
+            "file_id": file_id,
+            "details": details,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        await db.history.insert_one(history_entry)
+    except Exception as e:
+        logger.error(f"Failed to log history: {e}")
+        # Don't raise exception - history logging shouldn't break the main flow
 
 # ============================================================================
 # Authentication Routes
@@ -571,7 +705,16 @@ async def google_auth_callback(code: str = Query(...), state: str = Query(None))
             
             doc = user.model_dump()
             doc['created_date'] = doc['created_date'].isoformat()
+            # Store Google Access Token (In production, encrypt this!)
+            doc['google_access_token'] = credentials.token
             await db.users.insert_one(doc)
+            
+        if user_doc:
+             # Update token for existing user
+             await db.users.update_one(
+                 {"email": email},
+                 {"$set": {"google_access_token": credentials.token, "google_drive_connected": True}}
+             )
         
         # Create access token
         access_token = create_access_token(data={"sub": user.id})
@@ -584,6 +727,26 @@ async def google_auth_callback(code: str = Query(...), state: str = Query(None))
         frontend_url = os.getenv('FRONTEND_URL', os.getenv('REACT_APP_BACKEND_URL', ''))
         return RedirectResponse(url=f"{frontend_url}?google_auth=error&error={str(e)}")
 
+
+
+@api_router.get("/history", response_model=List[HistoryResponse])
+async def get_history(current_user: User = Depends(get_current_user)):
+    """Get user activity history"""
+    try:
+        history = await db.history.find({"user_id": current_user.id}).sort("timestamp", -1).to_list(100)
+        return [
+            HistoryResponse(
+                id=h['id'],
+                action=h['action'],
+                file_name=h['file_name'],
+                timestamp=h['timestamp'],
+                details=h.get('details')
+            ) for h in history
+        ]
+    except Exception as e:
+        logger.error(f"Failed to fetch history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ============================================================================
 # File Management Routes
 # ============================================================================
@@ -593,6 +756,8 @@ async def google_auth_callback(code: str = Query(...), state: str = Query(None))
 async def upload_file(
     request: Request,
     file: UploadFile = File(...),
+    is_public: bool = Form(True),
+    shared_with: str = Form(""), # Comma separated emails
     current_user: User = Depends(get_current_user)
 ):
     """Upload a file - Rate limited to 30 uploads per minute"""
@@ -614,9 +779,15 @@ async def upload_file(
         stored_filename = f"{file_id}{file_extension}"
         file_path = UPLOAD_DIR / stored_filename
         
-        # Save file to disk
+        # Encrypt content
+        encrypted_content, encrypted_key = encrypt_file_content(content)
+        
+        # Save encrypted file to disk
         with open(file_path, "wb") as buffer:
-            buffer.write(content)
+            buffer.write(encrypted_content)
+            
+        # Parse shared_with
+        shared_users = [email.strip() for email in shared_with.split(',') if email.strip()]
         
         # Create metadata
         file_metadata = FileMetadata(
@@ -628,8 +799,10 @@ async def upload_file(
             owner_id=current_user.id,
             owner_username=current_user.username,
             owner_type="guest" if current_user.is_guest else "user",
-            is_public=True,
-            source="upload"
+            is_public=is_public,
+            shared_with_users=shared_users,
+            source="upload",
+            encrypted_key=encrypted_key.decode('utf-8')
         )
         
         # Save metadata to MongoDB
@@ -639,6 +812,9 @@ async def upload_file(
         
         # Update user's total data shared
         await update_user_data_shared(current_user.id, file_size)
+        
+        # Log history
+        await log_history(current_user.id, "upload", file.filename, file_id, f"Size: {file_size} bytes")
         
         # Return response
         return FileResponse(
@@ -652,8 +828,9 @@ async def upload_file(
             share_url=f"/api/files/{file_id}/download",
             owner_username=current_user.username,
             owner_type="guest" if current_user.is_guest else "user",
-            is_public=True,
-            source="upload"
+            is_public=is_public,
+            source="upload",
+            shared_with_users=shared_users
         )
     
     except HTTPException:
@@ -670,7 +847,14 @@ async def get_files(current_user: Optional[User] = Depends(get_optional_user)):
         
         # If user is authenticated, show their files
         if current_user:
-            query = {"owner_id": current_user.id}
+            # Show files owned by user OR public files OR files shared with user
+            query = {
+                "$or": [
+                    {"owner_id": current_user.id},
+                    {"is_public": True},
+                    {"shared_with_users": current_user.email}
+                ]
+            }
         else:
             # If no user, return empty list
             return []
@@ -692,7 +876,8 @@ async def get_files(current_user: Optional[User] = Depends(get_optional_user)):
                 owner_type=file_doc.get('owner_type', 'guest'),
                 is_public=file_doc.get('is_public', True),
                 source=file_doc.get('source', 'upload'),
-                drive_file_id=file_doc.get('drive_file_id')
+                drive_file_id=file_doc.get('drive_file_id'),
+                shared_with_users=file_doc.get('shared_with_users', [])
             ))
         
         return file_responses
@@ -702,7 +887,7 @@ async def get_files(current_user: Optional[User] = Depends(get_optional_user)):
         raise HTTPException(status_code=500, detail=f"Failed to fetch files: {str(e)}")
 
 @api_router.get("/files/{file_id}/download")
-async def download_file(file_id: str):
+async def download_file(file_id: str, current_user: Optional[User] = Depends(get_optional_user)):
     """Download a file"""
     try:
         # Get file metadata from MongoDB
@@ -720,9 +905,35 @@ async def download_file(file_id: str):
         
         file_path = UPLOAD_DIR / file_doc['filename']
         
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail="File not found on disk")
+        file_path = UPLOAD_DIR / file_doc['filename']
         
+        # Check permissions
+        if not file_doc.get('is_public', True):
+            if not current_user:
+                raise HTTPException(status_code=403, detail="Authentication required for this file")
+            if file_doc['owner_id'] != current_user.id and current_user.email not in file_doc.get('shared_with_users', []):
+                raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Decrypt if needed
+        if file_doc.get('encrypted_key'):
+            with open(file_path, "rb") as f:
+                encrypted_content = f.read()
+            
+            decrypted_content = decrypt_file_content(encrypted_content, file_doc['encrypted_key'].encode('utf-8'))
+            
+            # Log history
+            # Note: We can't easily log history in a streaming response without background tasks, 
+            # but for now we'll log it here before returning.
+            # Ideally use BackgroundTasks
+            if current_user:
+                 await log_history(current_user.id, "download", file_doc['original_filename'], file_id)
+
+            return Response(
+                content=decrypted_content,
+                media_type=file_doc.get('content_type', 'application/octet-stream'),
+                headers={"Content-Disposition": f"attachment; filename={file_doc['original_filename']}"}
+            )
+
         return FastAPIFileResponse(
             path=file_path,
             filename=file_doc['original_filename'],
@@ -768,6 +979,60 @@ async def delete_file(file_id: str, current_user: User = Depends(get_current_use
     except Exception as e:
         logger.error(f"Delete failed: {e}")
         raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
+
+@api_router.get("/files/{file_id}/preview")
+async def preview_file(file_id: str, current_user: Optional[User] = Depends(get_optional_user)):
+    """Preview a file in browser (for images, PDFs, videos, text)"""
+    try:
+        file_doc = await db.files.find_one({"id": file_id}, {"_id": 0})
+        if not file_doc:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Check permissions
+        if not file_doc.get('is_public', True):
+            if not current_user:
+                raise HTTPException(status_code=403, detail="Authentication required for this file")
+            if file_doc['owner_id'] != current_user.id and current_user.email not in file_doc.get('shared_with_users', []):
+                raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Handle Drive files - redirect to Drive preview
+        if file_doc.get('source') == 'google_drive':
+            drive_file_id = file_doc.get('drive_file_id')
+            if drive_file_id:
+                # Return redirect to Drive web view
+                from fastapi.responses import RedirectResponse
+                return RedirectResponse(url=f"https://drive.google.com/file/d/{drive_file_id}/preview")
+            raise HTTPException(status_code=400, detail="Drive file ID not found")
+        
+        # Handle local files
+        file_path = UPLOAD_DIR / file_doc['filename']
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found on server")
+        
+        # Decrypt if needed
+        if file_doc.get('encrypted_key'):
+            with open(file_path, "rb") as f:
+                encrypted_content = f.read()
+            content = decrypt_file_content(encrypted_content, file_doc['encrypted_key'].encode('utf-8'))
+        else:
+            with open(file_path, "rb") as f:
+                content = f.read()
+        
+        # Return file for inline viewing
+        return Response(
+            content=content,
+            media_type=file_doc.get('content_type', 'application/octet-stream'),
+            headers={
+                "Content-Disposition": f"inline; filename={file_doc['original_filename']}",
+                "Cache-Control": "public, max-age=3600"
+            }
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Preview failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Preview failed: {str(e)}")
 
 # ============================================================================
 # WebSocket for WebRTC Signaling
@@ -995,7 +1260,6 @@ async def get_drive_service(current_user: User):
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }}
         )
-    
     return build('drive', 'v3', credentials=creds)
 
 @api_router.get("/drive/files", response_model=List[DriveFileInfo])
@@ -1007,7 +1271,8 @@ async def list_drive_files(current_user: User = Depends(get_current_user)):
         # List files
         results = service.files().list(
             pageSize=100,
-            fields="files(id, name, mimeType, size, webViewLink, iconLink)"
+            fields="files(id, name, mimeType, size, webViewLink, iconLink)",
+            q="trashed=false"
         ).execute()
         
         files = results.get('files', [])
@@ -1021,7 +1286,12 @@ async def list_drive_files(current_user: User = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"Failed to list Drive files: {str(e)}")
 
 @api_router.post("/drive/share/{drive_file_id}", response_model=FileResponse)
-async def share_drive_file(drive_file_id: str, current_user: User = Depends(get_current_user)):
+async def share_drive_file(
+    drive_file_id: str,
+    is_public: bool = True,
+    shared_with: str = "",  # Comma separated emails
+    current_user: User = Depends(get_current_user)
+):
     """Share a Google Drive file through UniShare"""
     try:
         service = await get_drive_service(current_user)
@@ -1041,6 +1311,9 @@ async def share_drive_file(drive_file_id: str, current_user: User = Depends(get_
                 detail=f"Guest data limit exceeded (2GB). Please create an account to continue sharing."
             )
         
+        # Parse shared_with
+        shared_users = [email.strip() for email in shared_with.split(',') if email.strip()]
+        
         # Create metadata in our database
         file_id = str(uuid.uuid4())
         file_doc = FileMetadata(
@@ -1052,7 +1325,8 @@ async def share_drive_file(drive_file_id: str, current_user: User = Depends(get_
             owner_id=current_user.id,
             owner_username=current_user.username,
             owner_type="guest" if current_user.is_guest else "user",
-            is_public=True,
+            is_public=is_public,
+            shared_with_users=shared_users,
             source="google_drive",
             drive_file_id=drive_file_id
         )
@@ -1063,6 +1337,16 @@ async def share_drive_file(drive_file_id: str, current_user: User = Depends(get_
         
         # Update user's total data shared
         await update_user_data_shared(current_user.id, file_size)
+        
+        # Log history
+        visibility = "public" if is_public else ("shared" if shared_users else "private")
+        await log_history(
+            current_user.id,
+            "import_drive",
+            file_metadata['name'],
+            file_id,
+            f"Imported from Google Drive ({visibility}, {file_size} bytes)"
+        )
         
         return FileResponse(
             id=file_id,
@@ -1075,9 +1359,10 @@ async def share_drive_file(drive_file_id: str, current_user: User = Depends(get_
             share_url=f"/api/files/{file_id}/download",
             owner_username=current_user.username,
             owner_type="guest" if current_user.is_guest else "user",
-            is_public=True,
+            is_public=is_public,
             source="google_drive",
-            drive_file_id=drive_file_id
+            drive_file_id=drive_file_id,
+            shared_with_users=shared_users
         )
     
     except HTTPException:

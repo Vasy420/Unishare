@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download, Trash2, Share2, File, HardDrive, CloudUpload } from 'lucide-react';
+import { Download, Trash2, Share2, File, HardDrive, CloudUpload, Eye } from 'lucide-react';
 
 const formatFileSize = (bytes) => {
   if (bytes === 0) return '0 Bytes';
@@ -20,14 +20,15 @@ const formatDate = (dateString) => {
   });
 };
 
-const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, user }) => {
-  console.log('[FileCard] Rendered with props:', { 
-    fileName: file?.original_filename, 
-    hasOnShare: !!onShare, 
-    hasOnDownload: !!onDownload, 
-    hasOnDelete: !!onDelete 
+const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, onPreview, user }) => {
+  console.log('[FileCard] Rendered with props:', {
+    fileName: file?.original_filename,
+    hasOnShare: !!onShare,
+    hasOnDownload: !!onDownload,
+    hasOnDelete: !!onDelete,
+    hasOnPreview: !!onPreview
   });
-  
+
   const handleShareClick = () => {
     console.log('[FileCard] Share button clicked for file:', file?.original_filename);
     if (onShare) {
@@ -36,7 +37,7 @@ const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, user }) 
       console.error('[FileCard] onShare is not defined!');
     }
   };
-  
+
   const handleDownloadClick = () => {
     console.log('[FileCard] Download button clicked for file:', file?.original_filename);
     if (onDownload) {
@@ -45,7 +46,7 @@ const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, user }) 
       console.error('[FileCard] onDownload is not defined!');
     }
   };
-  
+
   const handleDeleteClick = () => {
     console.log('[FileCard] Delete button clicked for file:', file?.original_filename);
     if (onDelete) {
@@ -54,7 +55,16 @@ const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, user }) 
       console.error('[FileCard] onDelete is not defined!');
     }
   };
-  
+
+  const handlePreviewClick = () => {
+    console.log('[FileCard] Preview button clicked for file:', file?.original_filename);
+    if (onPreview) {
+      onPreview(file);
+    } else {
+      console.error('[FileCard] onPreview is not defined!');
+    }
+  };
+
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 hover:shadow-lg transition-all duration-200">
       <div className="flex items-start justify-between mb-3">
@@ -91,7 +101,7 @@ const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, user }) 
           <Share2 className="w-4 h-4" />
           <span>Share</span>
         </button>
-        
+
         {/* Save to Drive button - show only if user has Drive connected and file is not already on Drive */}
         {user && user.google_drive_connected && file.source !== 'google_drive' && onSaveToDrive && (
           <button
@@ -102,7 +112,15 @@ const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, user }) 
             <CloudUpload className="w-4 h-4" />
           </button>
         )}
-        
+
+        <button
+          onClick={handlePreviewClick}
+          className="bg-purple-50 hover:bg-purple-100 dark:bg-purple-900/20 dark:hover:bg-purple-900/40 text-purple-600 dark:text-purple-400 p-2 rounded-lg transition-colors duration-200"
+          title="Preview"
+        >
+          <Eye className="w-4 h-4" />
+        </button>
+
         <button
           onClick={handleDownloadClick}
           className="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 p-2 rounded-lg transition-colors duration-200"

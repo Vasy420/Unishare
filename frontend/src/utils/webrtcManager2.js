@@ -161,12 +161,44 @@ class WebRTCManager {
     };
   }
 
+  // New: Host a file for P2P sharing without immediate transfer
+  hostFile(file) {
+    const fileId = Math.random().toString(36).substr(2, 9);
+    this.pendingFiles.set(fileId, file);
+    return fileId;
+  }
+
+  // New: Request a specific file from a peer
+  async requestFile(peerId, fileId) {
+    const dataChannel = this.dataChannels.get(peerId);
+    if (!dataChannel || dataChannel.readyState !== 'open') {
+      throw new Error('Data channel not ready');
+    }
+
+    console.log(`Requesting file ${fileId} from ${peerId}`);
+    dataChannel.send(JSON.stringify({
+      type: 'request-file',
+      fileId
+    }));
+  }
+
   async handleDataChannelMessage(peerId, data) {
     // Parse message
     if (typeof data === 'string') {
       const message = JSON.parse(data);
 
-      if (message.type === 'file-metadata') {
+      if (message.type === 'request-file') {
+        // Peer is requesting a file we're hosting
+        const file = this.pendingFiles.get(message.fileId);
+        if (file) {
+          console.log(`Peer ${peerId} requested file ${file.name}. Starting transfer...`);
+          // We reuse the existing sendFile logic but we might need to modify it to accept the specific fileId if we want to track it
+          this.sendFileWithId(peerId, file, message.fileId, this.onProgressUpdate);
+        } else {
+          console.error(`Requested file ${message.fileId} not found`);
+          // Optionally send error back
+        }
+      } else if (message.type === 'file-metadata') {
         // Initialize file reception
         this.receivingFiles.set(message.fileId, {
           name: message.name,
@@ -240,13 +272,17 @@ class WebRTCManager {
   }
 
   async sendFile(peerId, file, onProgress) {
+    this.sendFileWithId(peerId, file, Math.random().toString(36).substr(2, 9), onProgress);
+  }
+
+  async sendFileWithId(peerId, file, fileId, onProgress) {
     const dataChannel = this.dataChannels.get(peerId);
 
     if (!dataChannel || dataChannel.readyState !== 'open') {
       throw new Error('Data channel not ready');
     }
 
-    const fileId = Math.random().toString(36).substr(2, 9);
+    // const fileId = ... (now passed in)
     const CHUNK_SIZE = 16384; // 16KB chunks
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
