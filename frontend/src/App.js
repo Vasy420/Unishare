@@ -188,6 +188,30 @@ function App() {
     }
 
     setShowUploadModal(false);
+
+    // Handle Google Drive Import
+    if (file.source === 'google_drive') {
+      try {
+        const params = new URLSearchParams({
+          is_public: options.isPublic !== undefined ? options.isPublic : true,
+          shared_with: options.sharedWith || ''
+        });
+
+        const response = await axios.post(
+          `${API}/drive/share/${file.id}?${params}`,
+          {},
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+
+        alert(`"${file.name}" has been imported to UniShare!`);
+        await fetchFiles();
+      } catch (error) {
+        console.error('Import failed:', error);
+        alert(error.response?.data?.detail || 'Failed to import file to UniShare');
+      }
+      return;
+    }
+
     setUploading(true);
     setUploadProgress({ progress: 0, speed: 0, timeRemaining: 0, fileName: file.name });
 
@@ -666,7 +690,16 @@ function App() {
                 </div>
               </>
             } />
-            <Route path="/drive" element={<GoogleDriveView token={token} user={user} />} />
+            <Route path="/drive" element={
+              <GoogleDriveView
+                token={token}
+                user={user}
+                onFileSelect={(file) => {
+                  setSelectedFile({ ...file, source: 'google_drive' });
+                  setShowUploadModal(true);
+                }}
+              />
+            } />
             <Route path="/history" element={<HistoryView token={token} />} />
             <Route path="/receive" element={<ReceiveFileView />} />
           </Routes>

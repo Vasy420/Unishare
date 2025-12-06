@@ -4,7 +4,8 @@ import { QRCodeSVG } from 'qrcode.react';
 import webrtcManager from '../utils/webrtcManager2';
 
 const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
-    const [activeTab, setActiveTab] = useState('share'); // 'share' or 'upload'
+    const isDriveFile = file?.source === 'google_drive' || !!file?.webViewLink;
+    const [activeTab, setActiveTab] = useState(isDriveFile ? 'upload' : 'share'); // Default to upload for Drive files
     const [shareOptions, setShareOptions] = useState({
         isPublic: true,
         sharedWith: ''
@@ -16,26 +17,34 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
 
     useEffect(() => {
         if (isOpen && file) {
-            // Host the file for P2P and generate link
-            const fileId = webrtcManager.hostFile(file);
-            const userId = webrtcManager.userId;
-            if (userId) {
-                const link = `${window.location.origin}/receive?peer=${userId}&file=${fileId}&name=${encodeURIComponent(file.name)}&size=${file.size}`;
-                setP2pLink(link);
+            // Handle P2P/Drive Link Generation
+            if (isDriveFile && file.webViewLink) {
+                setP2pLink(file.webViewLink);
+            } else if (!isDriveFile) {
+                // Host the file for P2P and generate link
+                const fileId = webrtcManager.hostFile(file);
+                const userId = webrtcManager.userId;
+                if (userId) {
+                    // Generate P2P link with query params
+                    const link = `${window.location.origin}/receive?peer=${userId}&file=${fileId}&name=${encodeURIComponent(file.name)}&size=${file.size}`;
+                    setP2pLink(link);
+                }
             }
 
-            // Get online users
-            setOnlineUsers(webrtcManager.onlineUsers || []);
-            const originalHandler = webrtcManager.onOnlineUsersChange;
-            webrtcManager.onOnlineUsersChange = (users) => {
-                setOnlineUsers(users);
-                if (originalHandler) originalHandler(users);
-            };
-            return () => {
-                webrtcManager.onOnlineUsersChange = originalHandler;
-            };
+            // Get online users (only relevant for P2P)
+            if (!isDriveFile) {
+                setOnlineUsers(webrtcManager.onlineUsers || []);
+                const originalHandler = webrtcManager.onOnlineUsersChange;
+                webrtcManager.onOnlineUsersChange = (users) => {
+                    setOnlineUsers(users);
+                    if (originalHandler) originalHandler(users);
+                };
+                return () => {
+                    webrtcManager.onOnlineUsersChange = originalHandler;
+                };
+            }
         }
-    }, [isOpen, file]);
+    }, [isOpen, file, isDriveFile]);
 
     if (!isOpen || !file) return null;
 
@@ -57,7 +66,7 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                 {/* Header */}
                 <div className="flex items-center justify-between p-4 border-b border-gray-100 dark:border-slate-700">
                     <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                        Share or Upload
+                        {isDriveFile ? 'Import from Drive' : 'Share or Upload'}
                     </h3>
                     {!uploading && (
                         <button
@@ -69,7 +78,7 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                     )}
                 </div>
 
-                {/* Tabs */}
+                {/* Tabs - Always show both tabs */}
                 <div className="flex border-b border-gray-100 dark:border-slate-700">
                     <button
                         onClick={() => setActiveTab('share')}
@@ -80,7 +89,7 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                     >
                         <div className="flex items-center justify-center space-x-2">
                             <Share2 className="w-4 h-4" />
-                            <span>Share (No Upload)</span>
+                            <span>{isDriveFile ? 'Drive Link' : 'Share (No Upload)'}</span>
                         </div>
                     </button>
                     <button
@@ -92,7 +101,7 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                     >
                         <div className="flex items-center justify-center space-x-2">
                             <Upload className="w-4 h-4" />
-                            <span>Cloud Upload</span>
+                            <span>{isDriveFile ? 'Import to Cloud' : 'Cloud Upload'}</span>
                         </div>
                     </button>
                 </div>
@@ -106,10 +115,10 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                         </div>
                         <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                                {file.name}
+                                {file.name || file.original_filename}
                             </p>
                             <p className="text-xs text-gray-500 dark:text-gray-400">
-                                {(file.size / 1024 / 1024).toFixed(2)} MB
+                                {file.size ? (file.size / 1024 / 1024).toFixed(2) + ' MB' : ''}
                             </p>
                         </div>
                     </div>
@@ -120,7 +129,7 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                             <div>
                                 <h4 className="flex items-center space-x-2 text-sm font-semibold text-gray-900 dark:text-white mb-3">
                                     <LinkIcon className="w-4 h-4 text-blue-500" />
-                                    <span>Share Link (P2P)</span>
+                                    <span>{isDriveFile ? 'Google Drive Link' : 'Share Link (P2P)'}</span>
                                 </h4>
                                 {p2pLink ? (
                                     <div className="space-y-3">
@@ -139,11 +148,13 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                                                 <span>{copied ? 'Copied' : 'Copy'}</span>
                                             </button>
                                         </div>
-                                        <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
-                                            <p className="text-xs text-yellow-700 dark:text-yellow-300">
-                                                <strong>Important:</strong> Keep this tab open! The recipient needs you online to receive the file directly.
-                                            </p>
-                                        </div>
+                                        {!isDriveFile && (
+                                            <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
+                                                <p className="text-xs text-yellow-700 dark:text-yellow-300">
+                                                    <strong>Important:</strong> Keep this tab open! The recipient needs you online to receive the file directly.
+                                                </p>
+                                            </div>
+                                        )}
                                     </div>
                                 ) : (
                                     <p className="text-sm text-gray-500">Generating link...</p>
@@ -168,44 +179,46 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                                 </div>
                             )}
 
-                            {/* P2P Online Users */}
-                            <div>
-                                <h4 className="flex items-center space-x-2 text-sm font-semibold text-gray-900 dark:text-white mb-3">
-                                    <Wifi className="w-4 h-4 text-green-500" />
-                                    <span>Send Directly to Online Users</span>
-                                </h4>
-                                {onlineUsers.length > 0 ? (
-                                    <div className="grid gap-2 max-h-40 overflow-y-auto">
-                                        {onlineUsers.map(user => (
-                                            <div key={user.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-700/50 rounded-lg border border-gray-200 dark:border-slate-700">
-                                                <div className="flex items-center space-x-3">
-                                                    <span className="text-xl">{user.emoji || '👤'}</span>
-                                                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{user.username}</span>
-                                                </div>
-                                                <button
-                                                    onClick={async () => {
-                                                        try {
-                                                            if (!webrtcManager.dataChannels.has(user.id)) {
-                                                                await webrtcManager.initiateConnection(user.id);
-                                                                await new Promise(r => setTimeout(r, 2000));
+                            {/* P2P Online Users (Hide for Drive files) */}
+                            {!isDriveFile && (
+                                <div>
+                                    <h4 className="flex items-center space-x-2 text-sm font-semibold text-gray-900 dark:text-white mb-3">
+                                        <Wifi className="w-4 h-4 text-green-500" />
+                                        <span>Send Directly to Online Users</span>
+                                    </h4>
+                                    {onlineUsers.length > 0 ? (
+                                        <div className="grid gap-2 max-h-40 overflow-y-auto">
+                                            {onlineUsers.map(user => (
+                                                <div key={user.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-700/50 rounded-lg border border-gray-200 dark:border-slate-700">
+                                                    <div className="flex items-center space-x-3">
+                                                        <span className="text-xl">{user.emoji || '👤'}</span>
+                                                        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{user.username}</span>
+                                                    </div>
+                                                    <button
+                                                        onClick={async () => {
+                                                            try {
+                                                                if (!webrtcManager.dataChannels.has(user.id)) {
+                                                                    await webrtcManager.initiateConnection(user.id);
+                                                                    await new Promise(r => setTimeout(r, 2000));
+                                                                }
+                                                                await webrtcManager.sendFile(user.id, file);
+                                                                alert('File sent!');
+                                                            } catch (e) {
+                                                                alert('Send failed: ' + e.message);
                                                             }
-                                                            await webrtcManager.sendFile(user.id, file);
-                                                            alert('File sent!');
-                                                        } catch (e) {
-                                                            alert('Send failed: ' + e.message);
-                                                        }
-                                                    }}
-                                                    className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg"
-                                                >
-                                                    Send
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <p className="text-sm text-center text-gray-500 p-4 bg-gray-50 dark:bg-slate-700/30 rounded-lg">No other users online</p>
-                                )}
-                            </div>
+                                                        }}
+                                                        className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg"
+                                                    >
+                                                        Send
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <p className="text-sm text-center text-gray-500 p-4 bg-gray-50 dark:bg-slate-700/30 rounded-lg">No other users online</p>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -231,23 +244,26 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                                 </div>
                             </label>
 
-                            <label className="flex items-start space-x-3 cursor-pointer p-3 rounded-xl border border-gray-200 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-all">
-                                <input
-                                    type="radio"
-                                    checked={!shareOptions.isPublic && !shareOptions.sharedWith}
-                                    onChange={() => setShareOptions({ ...shareOptions, isPublic: false, sharedWith: '' })}
-                                    className="mt-1 w-4 h-4 text-blue-600"
-                                />
-                                <div>
-                                    <div className="flex items-center space-x-2">
-                                        <Lock className="w-4 h-4 text-orange-500" />
-                                        <span className="font-medium text-gray-900 dark:text-white">Private</span>
+                            {/* Hide Private Option for Drive Files per request */}
+                            {!isDriveFile && (
+                                <label className="flex items-start space-x-3 cursor-pointer p-3 rounded-xl border border-gray-200 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-all">
+                                    <input
+                                        type="radio"
+                                        checked={!shareOptions.isPublic && !shareOptions.sharedWith}
+                                        onChange={() => setShareOptions({ ...shareOptions, isPublic: false, sharedWith: '' })}
+                                        className="mt-1 w-4 h-4 text-blue-600"
+                                    />
+                                    <div>
+                                        <div className="flex items-center space-x-2">
+                                            <Lock className="w-4 h-4 text-orange-500" />
+                                            <span className="font-medium text-gray-900 dark:text-white">Private</span>
+                                        </div>
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                            Only accessible by you
+                                        </p>
                                     </div>
-                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                        Only accessible by you
-                                    </p>
-                                </div>
-                            </label>
+                                </label>
+                            )}
 
                             <label className="flex items-start space-x-3 cursor-pointer p-3 rounded-xl border border-gray-200 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-all">
                                 <input

@@ -2,16 +2,10 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { HardDrive, Download, ExternalLink, Loader2 } from 'lucide-react';
 
-const GoogleDriveView = ({ token, user }) => {
+const GoogleDriveView = ({ token, user, onFileSelect }) => {
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [showShareModal, setShowShareModal] = useState(false);
-    const [selectedFile, setSelectedFile] = useState(null);
-    const [shareOptions, setShareOptions] = useState({
-        isPublic: true,
-        sharedWith: ''
-    });
 
     useEffect(() => {
         if (user && user.google_drive_connected) {
@@ -20,7 +14,7 @@ const GoogleDriveView = ({ token, user }) => {
             setLoading(false);
             setError('Google Drive is not connected. Please connect your account.');
         }
-    }, [user?.google_drive_connected, token]); // Track specific property
+    }, [user?.google_drive_connected, token]);
 
     const fetchDriveFiles = async () => {
         try {
@@ -48,37 +42,6 @@ const GoogleDriveView = ({ token, user }) => {
         } catch (err) {
             console.error('Failed to initiate Drive connection:', err);
             alert('Failed to connect to Google Drive. Please try again.');
-        }
-    };
-
-    const handleShareToUniShare = (file) => {
-        setSelectedFile(file);
-        setShowShareModal(true);
-    };
-
-    const confirmShare = async () => {
-        if (!selectedFile) return;
-
-        try {
-            const params = new URLSearchParams({
-                is_public: shareOptions.isPublic,
-                shared_with: shareOptions.sharedWith
-            });
-
-            const response = await axios.post(
-                `${process.env.REACT_APP_BACKEND_URL}/api/drive/share/${selectedFile.id}?${params}`,
-                {},
-                { headers: { Authorization: `Bearer ${token}` } }
-            );
-
-            alert(`"${selectedFile.name}" has been imported to UniShare!`);
-            setShowShareModal(false);
-            setSelectedFile(null);
-            setShareOptions({ isPublic: true, sharedWith: '' });
-        } catch (err) {
-            console.error('Failed to share file:', err);
-            const errorMsg = err.response?.data?.detail || 'Failed to import file to UniShare';
-            alert(errorMsg);
         }
     };
 
@@ -181,7 +144,7 @@ const GoogleDriveView = ({ token, user }) => {
                                         <span>View</span>
                                     </a>
                                     <button
-                                        onClick={() => handleShareToUniShare(file)}
+                                        onClick={() => onFileSelect && onFileSelect(file)}
                                         className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 transition-colors"
                                         title="Import to UniShare"
                                     >
@@ -192,83 +155,6 @@ const GoogleDriveView = ({ token, user }) => {
                             </div>
                         </div>
                     ))}
-                </div>
-            )}
-
-            {/* Sharing Options Modal */}
-            {showShareModal && selectedFile && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl max-w-md w-full p-6">
-                        <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
-                            Import "{selectedFile.name}"
-                        </h3>
-
-                        <div className="space-y-4 mb-6">
-                            <div>
-                                <label className="flex items-center space-x-3 cursor-pointer">
-                                    <input
-                                        type="radio"
-                                        checked={shareOptions.isPublic}
-                                        onChange={() => setShareOptions({ ...shareOptions, isPublic: true, sharedWith: '' })}
-                                        className="w-4 h-4 text-blue-600"
-                                    />
-                                    <span className="text-gray-700 dark:text-gray-300">Public (anyone can access)</span>
-                                </label>
-                            </div>
-
-                            <div>
-                                <label className="flex items-center space-x-3 cursor-pointer mb-2">
-                                    <input
-                                        type="radio"
-                                        checked={!shareOptions.isPublic && !shareOptions.sharedWith}
-                                        onChange={() => setShareOptions({ ...shareOptions, isPublic: false, sharedWith: '' })}
-                                        className="w-4 h-4 text-blue-600"
-                                    />
-                                    <span className="text-gray-700 dark:text-gray-300">Private (only you)</span>
-                                </label>
-                            </div>
-
-                            <div>
-                                <label className="flex items-center space-x-3 cursor-pointer mb-2">
-                                    <input
-                                        type="radio"
-                                        checked={!shareOptions.isPublic && shareOptions.sharedWith}
-                                        onChange={() => setShareOptions({ ...shareOptions, isPublic: false })}
-                                        className="w-4 h-4 text-blue-600"
-                                    />
-                                    <span className="text-gray-700 dark:text-gray-300">Shared with specific users</span>
-                                </label>
-                                {!shareOptions.isPublic && (
-                                    <input
-                                        type="text"
-                                        placeholder="Enter emails (comma separated)"
-                                        value={shareOptions.sharedWith}
-                                        onChange={(e) => setShareOptions({ ...shareOptions, sharedWith: e.target.value })}
-                                        className="w-full mt-2 px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500"
-                                    />
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="flex space-x-3">
-                            <button
-                                onClick={() => {
-                                    setShowShareModal(false);
-                                    setSelectedFile(null);
-                                    setShareOptions({ isPublic: true, sharedWith: '' });
-                                }}
-                                className="flex-1 px-4 py-2 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={confirmShare}
-                                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                            >
-                                Import to UniShare
-                            </button>
-                        </div>
-                    </div>
                 </div>
             )}
         </div>

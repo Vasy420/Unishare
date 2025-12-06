@@ -21,7 +21,8 @@ const FilePreviewModal = ({ file, onClose, token }) => {
     const lowerName = file.original_filename.toLowerCase();
     const isOfficeDoc = officeExtensions.some(ext => lowerName.endsWith(ext));
 
-    const isPreviewable = isImage || isPDF || isVideo || isAudio || isText || isOfficeDoc;
+    const isDrivePreview = file.source === 'google_drive' && file.drive_file_id;
+    const isPreviewable = isImage || isPDF || isVideo || isAudio || isText || isOfficeDoc || isDrivePreview;
 
     return (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -142,6 +143,15 @@ const FilePreviewModal = ({ file, onClose, token }) => {
                                         />
                                     )}
                                 </div>
+                            )}
+                            {/* Google Drive Preview */}
+                            {file.source === 'google_drive' && file.drive_file_id && (
+                                <iframe
+                                    src={`https://drive.google.com/file/d/${file.drive_file_id}/preview`}
+                                    className="w-full h-[70vh] rounded-lg shadow-lg bg-white border-0"
+                                    title={file.original_filename}
+                                    allow="autoplay"
+                                />
                             )}
                         </div>
                     ) : (
