@@ -1,23 +1,52 @@
 // Enhanced WebRTC Manager with DataChannels for P2P file sharing
+import { getWebRtcIceServers, isOfflineMode } from './offline';
 
 class WebRTCManager {
   constructor() {
     this.ws = null;
     this.userId = null;
+    this.username = null;
+    this.emoji = null;
     this.peers = new Map(); // Map of peer connections
     this.dataChannels = new Map(); // Map of data channels
     this.onlineUsers = [];
     this.onOnlineUsersChange = null;
     this.onFileReceived = null;
+    this.onFileOffered = null;
     this.onProgressUpdate = null;
-    this.pendingFiles = new Map(); // Files being sent
+    this.pendingFiles = new Map(); // Files hosted for link-based pickup
+    this.pendingSends = new Map(); // Files awaiting offer accept/decline
     this.receivingFiles = new Map(); // Files being received
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
+    this.broadcastChannel = null;
+    this.broadcastPeers = new Map();
+    this.presenceInterval = null;
+    this.wsConnected = false;
   }
 
   connect(userId, backendUrl, username = null, emoji = null) {
     this.userId = userId;
+    this.username = username || 'Anonymous';
+    this.emoji = emoji || '👤';
+
+    if (isOfflineMode()) {
+      this.enableBroadcastSignaling();
+    }
+
+    if (!backendUrl) {
+      if (this.enableBroadcastSignaling()) {
+        return;
+      }
+      console.warn('WebRTC signaling requires a backend URL. Skipping WebSocket connection.');
+      return;
+    }
+
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+
     const wsUrl = backendUrl.replace('https://', 'wss://').replace('http://', 'ws://');
 
     // Add query parameters for username and emoji if provided
@@ -31,44 +60,32 @@ class WebRTCManager {
     }
 
     this.ws = new WebSocket(url);
+    this.wsConnected = false;
 
     this.ws.onopen = () => {
       console.log('WebSocket connected');
+      this.wsConnected = true;
       this.reconnectAttempts = 0;
     };
 
     this.ws.onmessage = async (event) => {
       const data = JSON.parse(event.data);
-      console.log('WebSocket message:', data);
-
-      switch (data.type) {
-        case 'online_users':
-          this.onlineUsers = data.users.filter(u => u.id !== this.userId);
-          if (this.onOnlineUsersChange) {
-            this.onOnlineUsersChange(this.onlineUsers);
-          }
-          break;
-
-        case 'offer':
-          await this.handleOffer(data.sender, data.offer);
-          break;
-
-        case 'answer':
-          await this.handleAnswer(data.sender, data.answer);
-          break;
-
-        case 'ice-candidate':
-          await this.handleIceCandidate(data.sender, data.candidate);
-          break;
-      }
+      this.handleSignalPayload(data);
     };
 
     this.ws.onerror = (error) => {
       console.error('WebSocket error:', error);
+      if (!this.wsConnected && isOfflineMode()) {
+        this.enableBroadcastSignaling();
+      }
     };
 
     this.ws.onclose = () => {
       console.log('WebSocket closed');
+      if (!this.wsConnected && isOfflineMode()) {
+        this.enableBroadcastSignaling();
+        return;
+      }
       // Attempt to reconnect
       if (this.reconnectAttempts < this.maxReconnectAttempts) {
         this.reconnectAttempts++;
@@ -81,21 +98,22 @@ class WebRTCManager {
   }
 
   updateUserInfo(username, emoji) {
+    this.username = username || this.username;
+    this.emoji = emoji || this.emoji;
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({
         type: 'update_info',
         username,
         emoji
       }));
+    } else if (this.broadcastChannel) {
+      this.broadcastPresence();
     }
   }
 
   async createPeerConnection(peerId, isInitiator = true) {
     const configuration = {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
-      ]
+      iceServers: getWebRtcIceServers()
     };
 
     const peerConnection = new RTCPeerConnection(configuration);
@@ -103,12 +121,15 @@ class WebRTCManager {
 
     // Handle ICE candidates
     peerConnection.onicecandidate = (event) => {
-      if (event.candidate && this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({
+      if (event.candidate) {
+        const sent = this.sendSignal({
           type: 'ice-candidate',
           target: peerId,
           candidate: event.candidate
-        }));
+        });
+        if (!sent) {
+          console.warn('Signaling channel not ready. ICE candidate skipped.');
+        }
       }
     };
 
@@ -182,6 +203,21 @@ class WebRTCManager {
     }));
   }
 
+  // Receiver responds to an incoming file-offer
+  respondToOffer(peerId, fileId, accepted) {
+    const dataChannel = this.dataChannels.get(peerId);
+    if (!dataChannel || dataChannel.readyState !== 'open') {
+      console.error('Cannot respond to offer: data channel not open');
+      return false;
+    }
+    dataChannel.send(JSON.stringify({
+      type: 'file-offer-response',
+      fileId,
+      accepted: !!accepted
+    }));
+    return true;
+  }
+
   async handleDataChannelMessage(peerId, data) {
     // Parse message
     if (typeof data === 'string') {
@@ -192,11 +228,48 @@ class WebRTCManager {
         const file = this.pendingFiles.get(message.fileId);
         if (file) {
           console.log(`Peer ${peerId} requested file ${file.name}. Starting transfer...`);
-          // We reuse the existing sendFile logic but we might need to modify it to accept the specific fileId if we want to track it
           this.sendFileWithId(peerId, file, message.fileId, this.onProgressUpdate);
         } else {
           console.error(`Requested file ${message.fileId} not found`);
-          // Optionally send error back
+        }
+      } else if (message.type === 'file-offer') {
+        // Sender is offering a file — present accept/decline UI to user
+        if (this.onFileOffered) {
+          this.onFileOffered({
+            peerId,
+            fileId: message.fileId,
+            name: message.name,
+            size: message.size,
+            mimeType: message.mimeType,
+            sender: message.sender || { username: 'Peer', emoji: '👤' }
+          });
+        } else {
+          console.warn('No onFileOffered handler set; auto-declining');
+          this.respondToOffer(peerId, message.fileId, false);
+        }
+      } else if (message.type === 'file-offer-response') {
+        // Receiver accepted or declined our offer
+        const pending = this.pendingSends.get(message.fileId);
+        if (pending) {
+          this.pendingSends.delete(message.fileId);
+          if (message.accepted) {
+            if (pending.onProgress) {
+              pending.onProgress({ type: 'accepted', fileName: pending.file.name });
+            }
+            this.sendFileWithId(
+              pending.peerId,
+              pending.file,
+              message.fileId,
+              pending.onProgress,
+              () => pending.resolve && pending.resolve()
+            );
+          } else {
+            console.log(`Peer ${peerId} declined file: ${pending.file.name}`);
+            if (pending.onProgress) {
+              pending.onProgress({ type: 'declined', fileName: pending.file.name });
+            }
+            pending.reject && pending.reject(new Error('Peer declined the file'));
+          }
         }
       } else if (message.type === 'file-metadata') {
         // Initialize file reception
@@ -206,7 +279,8 @@ class WebRTCManager {
           type: message.mimeType,
           chunks: [],
           receivedSize: 0,
-          totalChunks: message.totalChunks
+          totalChunks: message.totalChunks,
+          sender: message.sender || null
         });
 
         // Notify about starting to receive
@@ -215,6 +289,7 @@ class WebRTCManager {
             type: 'receiving',
             peerId,
             fileName: message.name,
+            sender: message.sender || null,
             progress: 0,
             speed: 0,
             timeRemaining: 0
@@ -257,7 +332,11 @@ class WebRTCManager {
 
             // Trigger file received callback
             if (this.onFileReceived) {
-              this.onFileReceived(fileInfo.name, blob, peerId);
+              this.onFileReceived(fileInfo.name, blob, peerId, {
+                sender: fileInfo.sender,
+                size: fileInfo.size,
+                mimeType: fileInfo.type
+              });
             }
 
             // Clean up
@@ -272,28 +351,74 @@ class WebRTCManager {
   }
 
   async sendFile(peerId, file, onProgress) {
-    this.sendFileWithId(peerId, file, Math.random().toString(36).substr(2, 9), onProgress);
+    const dataChannel = this.dataChannels.get(peerId);
+    if (!dataChannel || dataChannel.readyState !== 'open') {
+      throw new Error('Data channel not ready');
+    }
+
+    const fileId = Math.random().toString(36).substr(2, 9);
+
+    return new Promise((resolve, reject) => {
+      const timeoutMs = 120000;
+      const timeoutId = setTimeout(() => {
+        if (this.pendingSends.has(fileId)) {
+          this.pendingSends.delete(fileId);
+          reject(new Error('Peer did not respond to file offer'));
+        }
+      }, timeoutMs);
+
+      this.pendingSends.set(fileId, {
+        file,
+        peerId,
+        onProgress,
+        resolve: () => { clearTimeout(timeoutId); resolve(); },
+        reject: (err) => { clearTimeout(timeoutId); reject(err); }
+      });
+
+      try {
+        dataChannel.send(JSON.stringify({
+          type: 'file-offer',
+          fileId,
+          name: file.name,
+          size: file.size,
+          mimeType: file.type,
+          sender: {
+            userId: this.userId,
+            username: this.username,
+            emoji: this.emoji
+          }
+        }));
+      } catch (e) {
+        clearTimeout(timeoutId);
+        this.pendingSends.delete(fileId);
+        reject(e);
+      }
+    });
   }
 
-  async sendFileWithId(peerId, file, fileId, onProgress) {
+  async sendFileWithId(peerId, file, fileId, onProgress, onComplete) {
     const dataChannel = this.dataChannels.get(peerId);
 
     if (!dataChannel || dataChannel.readyState !== 'open') {
       throw new Error('Data channel not ready');
     }
 
-    // const fileId = ... (now passed in)
     const CHUNK_SIZE = 16384; // 16KB chunks
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
-    // Send file metadata
+    // Send file metadata (includes sender so receiver UI can show who it's from)
     dataChannel.send(JSON.stringify({
       type: 'file-metadata',
       fileId,
       name: file.name,
       size: file.size,
       mimeType: file.type,
-      totalChunks
+      totalChunks,
+      sender: {
+        userId: this.userId,
+        username: this.username,
+        emoji: this.emoji
+      }
     }));
 
     // Send file in chunks
@@ -342,6 +467,7 @@ class WebRTCManager {
         setTimeout(sendNextChunk, 10);
       } else {
         console.log('File sent successfully');
+        if (onComplete) onComplete();
       }
     };
 
@@ -359,13 +485,13 @@ class WebRTCManager {
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
 
-      // Send offer via WebSocket
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({
-          type: 'offer',
-          target: peerId,
-          offer: offer
-        }));
+      const sent = this.sendSignal({
+        type: 'offer',
+        target: peerId,
+        offer: offer
+      });
+      if (!sent) {
+        throw new Error('Signaling channel not ready');
       }
     } catch (error) {
       console.error('Error initiating connection:', error);
@@ -382,13 +508,13 @@ class WebRTCManager {
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
 
-      // Send answer via WebSocket
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({
-          type: 'answer',
-          target: peerId,
-          answer: answer
-        }));
+      const sent = this.sendSignal({
+        type: 'answer',
+        target: peerId,
+        answer: answer
+      });
+      if (!sent) {
+        console.warn('Signaling channel not ready. Answer not sent.');
       }
     } catch (error) {
       console.error('Error handling offer:', error);
@@ -442,6 +568,205 @@ class WebRTCManager {
       this.ws.close();
       this.ws = null;
     }
+
+    this.wsConnected = false;
+
+    if (this.broadcastChannel) {
+      this.broadcastPresence({ type: 'presence-leave' });
+      this.broadcastChannel.close();
+      this.broadcastChannel = null;
+    }
+
+    if (this.presenceInterval) {
+      clearInterval(this.presenceInterval);
+      this.presenceInterval = null;
+    }
+  }
+
+  enableBroadcastSignaling() {
+    if (typeof BroadcastChannel === 'undefined') {
+      return false;
+    }
+    if (!isOfflineMode()) {
+      return false;
+    }
+    if (this.broadcastChannel) {
+      return true;
+    }
+
+    console.log('Using BroadcastChannel signaling');
+    this.broadcastChannel = new BroadcastChannel('unishare-signal');
+    this.broadcastChannel.onmessage = (event) => {
+      this.handleBroadcastMessage(event.data);
+    };
+
+    this.startPresenceLoop();
+    this.broadcastPresence();
+    this.broadcastChannel.postMessage({
+      type: 'presence-request',
+      sender: this.userId
+    });
+
+    return true;
+  }
+
+  startPresenceLoop() {
+    if (this.presenceInterval) return;
+    this.presenceInterval = setInterval(() => {
+      this.broadcastPresence();
+      this.pruneBroadcastPeers();
+    }, 5000);
+  }
+
+  broadcastPresence(extra = {}) {
+    if (!this.broadcastChannel) return;
+    const payload = {
+      type: 'presence',
+      sender: this.userId,
+      username: this.username || 'Anonymous',
+      emoji: this.emoji || '👤',
+      timestamp: Date.now(),
+      ...extra
+    };
+    this.broadcastChannel.postMessage(payload);
+  }
+
+  pruneBroadcastPeers() {
+    const now = Date.now();
+    let changed = false;
+    for (const [id, info] of this.broadcastPeers.entries()) {
+      if (now - info.lastSeen > 15000) {
+        this.broadcastPeers.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.updateOnlineUsersFromBroadcast();
+    }
+  }
+
+  updateOnlineUsersFromBroadcast() {
+    if (this.wsConnected) return;
+    this.onlineUsers = Array.from(this.broadcastPeers.values());
+    if (this.onOnlineUsersChange) {
+      this.onOnlineUsersChange(this.onlineUsers);
+    }
+  }
+
+  handleBroadcastMessage(message) {
+    if (!message || typeof message !== 'object') return;
+
+    if (message.type === 'presence-request') {
+      if (message.sender !== this.userId) {
+        this.broadcastPresence();
+      }
+      return;
+    }
+
+    if (message.type === 'presence' || message.type === 'presence-leave') {
+      if (this.wsConnected) return;
+      if (message.sender === this.userId) return;
+      if (message.type === 'presence-leave') {
+        this.broadcastPeers.delete(message.sender);
+        this.updateOnlineUsersFromBroadcast();
+        return;
+      }
+
+      this.broadcastPeers.set(message.sender, {
+        id: message.sender,
+        username: message.username || 'Anonymous',
+        emoji: message.emoji || '👤',
+        lastSeen: message.timestamp || Date.now()
+      });
+      this.updateOnlineUsersFromBroadcast();
+      return;
+    }
+
+    if (message.sender && message.sender === this.userId) {
+      return;
+    }
+
+    if (message.target && message.target !== this.userId) {
+      return;
+    }
+
+    this.handleSignalPayload(message);
+  }
+
+  handleSignalPayload(data) {
+    if (!data || !data.type) return;
+    switch (data.type) {
+      case 'online_users':
+        this.onlineUsers = data.users.filter(u => u.id !== this.userId);
+        if (this.onOnlineUsersChange) {
+          this.onOnlineUsersChange(this.onlineUsers);
+        }
+        break;
+
+      case 'offer':
+        this.handleOffer(data.sender, data.offer);
+        break;
+
+      case 'answer':
+        this.handleAnswer(data.sender, data.answer);
+        break;
+
+      case 'ice-candidate':
+        this.handleIceCandidate(data.sender, data.candidate);
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  sendSignal(payload) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(payload));
+      return true;
+    }
+    if (this.broadcastChannel) {
+      const clone = { ...payload, sender: this.userId };
+      if (clone.candidate && typeof clone.candidate.toJSON === 'function') {
+        clone.candidate = clone.candidate.toJSON();
+      }
+      this.broadcastChannel.postMessage(clone);
+      return true;
+    }
+    return false;
+  }
+
+  isSignalingReady() {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) return true;
+    if (this.broadcastChannel) return true;
+    return false;
+  }
+
+  waitForDataChannelOpen(peerId, timeout = 10000) {
+    return new Promise((resolve, reject) => {
+      const dataChannel = this.dataChannels.get(peerId);
+      if (!dataChannel) {
+        reject(new Error('Data channel does not exist'));
+        return;
+      }
+      if (dataChannel.readyState === 'open') {
+        resolve();
+        return;
+      }
+
+      const existingOnOpen = dataChannel.onopen;
+      const timer = setTimeout(() => {
+        dataChannel.onopen = existingOnOpen;
+        reject(new Error('Data channel open timeout'));
+      }, timeout);
+
+      dataChannel.onopen = () => {
+        clearTimeout(timer);
+        dataChannel.onopen = existingOnOpen;
+        if (existingOnOpen) existingOnOpen();
+        resolve();
+      };
+    });
   }
 }
 

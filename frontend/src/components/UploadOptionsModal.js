@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Upload, X, Users, Globe, Lock, Share2, FileText, QrCode, Link as LinkIcon, Wifi, Copy, Check } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import webrtcManager from '../utils/webrtcManager2';
+import { isOfflineMode } from '../utils/offline';
 
 const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
     const isDriveFile = file?.source === 'google_drive' || !!file?.webViewLink;
@@ -13,7 +14,21 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
     const [onlineUsers, setOnlineUsers] = useState([]);
     const [p2pLink, setP2pLink] = useState(null);
     const [copied, setCopied] = useState(false);
+    const [peerStatus, setPeerStatus] = useState({}); // userId -> {label, kind}
     const qrRef = useRef(null);
+
+    const setStatusForPeer = (userId, label, kind, autoClearMs = 0) => {
+        setPeerStatus(prev => ({ ...prev, [userId]: { label, kind } }));
+        if (autoClearMs > 0) {
+            setTimeout(() => {
+                setPeerStatus(prev => {
+                    const next = { ...prev };
+                    delete next[userId];
+                    return next;
+                });
+            }, autoClearMs);
+        }
+    };
 
     useEffect(() => {
         if (isOpen && file) {
@@ -21,11 +36,9 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
             if (isDriveFile && file.webViewLink) {
                 setP2pLink(file.webViewLink);
             } else if (!isDriveFile) {
-                // Host the file for P2P and generate link
                 const fileId = webrtcManager.hostFile(file);
                 const userId = webrtcManager.userId;
                 if (userId) {
-                    // Generate P2P link with query params
                     const link = `${window.location.origin}/receive?peer=${userId}&file=${fileId}&name=${encodeURIComponent(file.name)}&size=${file.size}`;
                     setP2pLink(link);
                 }
@@ -125,6 +138,13 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
 
                     {activeTab === 'share' && (
                         <div className="space-y-6 animate-in slide-in-from-left-4 fade-in duration-300">
+                            {isOfflineMode() && !isDriveFile && (
+                                <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
+                                    <p className="text-xs text-yellow-700 dark:text-yellow-300">
+                                        Offline mode is enabled. Keep this tab open and open the receive link in another tab to transfer locally.
+                                    </p>
+                                </div>
+                            )}
                             {/* Link Section */}
                             <div>
                                 <h4 className="flex items-center space-x-2 text-sm font-semibold text-gray-900 dark:text-white mb-3">
@@ -194,23 +214,50 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                                                         <span className="text-xl">{user.emoji || '👤'}</span>
                                                         <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{user.username}</span>
                                                     </div>
-                                                    <button
-                                                        onClick={async () => {
-                                                            try {
-                                                                if (!webrtcManager.dataChannels.has(user.id)) {
-                                                                    await webrtcManager.initiateConnection(user.id);
-                                                                    await new Promise(r => setTimeout(r, 2000));
-                                                                }
-                                                                await webrtcManager.sendFile(user.id, file);
-                                                                alert('File sent!');
-                                                            } catch (e) {
-                                                                alert('Send failed: ' + e.message);
-                                                            }
-                                                        }}
-                                                        className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg"
-                                                    >
-                                                        Send
-                                                    </button>
+                                                      <button
+                                                          onClick={async () => {
+                                                              const uid = user.id;
+                                                              try {
+                                                                  setStatusForPeer(uid, 'Connecting...', 'pending');
+                                                                  const dc = webrtcManager.dataChannels.get(uid);
+                                                                  if (!dc || dc.readyState !== 'open') {
+                                                                      if (!dc) await webrtcManager.initiateConnection(uid);
+                                                                      await webrtcManager.waitForDataChannelOpen(uid, 10000);
+                                                                  }
+                                                                  setStatusForPeer(uid, 'Waiting for accept...', 'pending');
+                                                                  await webrtcManager.sendFile(uid, file, (update) => {
+                                                                      if (update?.type === 'accepted') {
+                                                                          setStatusForPeer(uid, 'Sending...', 'pending');
+                                                                      } else if (update?.progress !== undefined) {
+                                                                          setStatusForPeer(uid, `${update.progress}%`, 'pending');
+                                                                      }
+                                                                  });
+                                                                  setStatusForPeer(uid, 'Sent', 'success', 3000);
+                                                              } catch (e) {
+                                                                  const msg = (e.message || '').toLowerCase();
+                                                                  if (msg.includes('declined')) {
+                                                                      setStatusForPeer(uid, 'Declined', 'error', 4000);
+                                                                  } else if (msg.includes('did not respond')) {
+                                                                      setStatusForPeer(uid, 'No response', 'error', 4000);
+                                                                  } else {
+                                                                      setStatusForPeer(uid, 'Failed', 'error', 4000);
+                                                                      console.error('Send failed:', e);
+                                                                  }
+                                                              }
+                                                          }}
+                                                          disabled={peerStatus[user.id]?.kind === 'pending'}
+                                                          className={`px-3 py-1 text-white text-xs font-medium rounded-lg min-w-[80px] ${
+                                                              peerStatus[user.id]?.kind === 'success'
+                                                                  ? 'bg-emerald-600'
+                                                                  : peerStatus[user.id]?.kind === 'error'
+                                                                  ? 'bg-red-600'
+                                                                  : peerStatus[user.id]?.kind === 'pending'
+                                                                  ? 'bg-blue-500 cursor-not-allowed'
+                                                                  : 'bg-green-600 hover:bg-green-700'
+                                                          }`}
+                                                      >
+                                                         {peerStatus[user.id]?.label || 'Send'}
+                                                     </button>
                                                 </div>
                                             ))}
                                         </div>

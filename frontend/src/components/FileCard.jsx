@@ -83,6 +83,20 @@ const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, onPrevie
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
               {formatFileSize(file.size)} • {formatDate(file.upload_date)}
             </p>
+            {file.owner_username && (
+              <p className="text-xs text-gray-600 dark:text-gray-300 mt-0.5">
+                <span className="text-gray-400 dark:text-gray-500">by </span>
+                <span className="font-medium">{file.owner_username}</span>
+                {file.owner_type === 'guest' && (
+                  <span className="ml-1 inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300">
+                    guest
+                  </span>
+                )}
+                {user && file.owner_id === user.id && (
+                  <span className="ml-1 text-[10px] text-blue-500">you</span>
+                )}
+              </p>
+            )}
             {file.source === 'google_drive' && (
               <span className="inline-flex items-center mt-1 text-xs text-blue-600 dark:text-blue-400">
                 <HardDrive className="w-3 h-3 mr-1" />

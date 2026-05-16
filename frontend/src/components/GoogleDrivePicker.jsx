@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { HardDrive, Loader, X, ExternalLink } from 'lucide-react';
 import axios from 'axios';
+import { isOfflineMode } from '../utils/offline';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -13,6 +14,11 @@ const GoogleDrivePicker = ({ isOpen, onClose, onFileShared, token }) => {
 
   useEffect(() => {
     if (isOpen) {
+      if (isOfflineMode()) {
+        setError('Offline mode is enabled. Google Drive is unavailable.');
+        setDriveFiles([]);
+        return;
+      }
       fetchDriveFiles();
     }
   }, [isOpen]);
@@ -34,6 +40,10 @@ const GoogleDrivePicker = ({ isOpen, onClose, onFileShared, token }) => {
   };
 
   const handleShareFile = async (driveFile) => {
+    if (isOfflineMode()) {
+      setError('Offline mode is enabled. Google Drive is unavailable.');
+      return;
+    }
     setSharing(driveFile.id);
     setError('');
     try {

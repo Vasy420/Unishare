@@ -21,12 +21,12 @@ from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
 import os
+import secrets
 import logging
 import uuid
 import shutil
 import io
 import json
-import requests
 import requests
 import time
 from cryptography.fernet import Fernet
@@ -54,8 +54,6 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 # Security setup
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
-ALGORITHM = "HS256"
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
@@ -164,17 +162,17 @@ async def lifespan(app: FastAPI):
         await db.files.create_index("id", unique=True)
         await db.files.create_index([("owner_id", 1), ("upload_date", -1)])
         await db.files.create_index([("is_public", 1), ("upload_date", -1)])
-        await db.files.create_index([("is_public", 1), ("upload_date", -1)])
         await db.files.create_index("drive_file_id", sparse=True)
         
         # History collection indexes
         await db.history.create_index([("user_id", 1), ("timestamp", -1)])
-        
-        # History collection indexes
-        await db.history.create_index([("user_id", 1), ("timestamp", -1)])
-        
+
         logger.info("✅ Database indexes created successfully")
         logger.info(f"✅ Configured BACKEND_URL: {os.getenv('BACKEND_URL')}")
+
+        # Seed admin user if none exists
+        await ensure_admin_user()
+
         logger.info("✅ UniShare API started - Windows Compatible Mode")
     except Exception as e:
         logger.warning(f"⚠️ Index creation warning: {e}")
@@ -282,12 +280,14 @@ class GuestCreate(BaseModel):
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     username: str
     email: Optional[str] = None
     password_hash: Optional[str] = None
     is_guest: bool = True
+    is_admin: bool = False
+    is_blocked: bool = False
     emoji: str = "👤"
     total_data_shared: int = 0  # in bytes
     google_drive_connected: bool = False
@@ -302,6 +302,8 @@ class UserResponse(BaseModel):
     username: str
     email: Optional[str] = None
     is_guest: bool
+    is_admin: bool = False
+    is_blocked: bool = False
     emoji: str
     total_data_shared: int
     google_drive_connected: bool
@@ -329,6 +331,7 @@ class FileMetadata(BaseModel):
     shared_with_users: List[str] = Field(default_factory=list)
     source: str = "upload"  # "upload" or "google_drive"
     drive_file_id: Optional[str] = None
+    encrypted_key: Optional[str] = None
 
 class FileResponse(BaseModel):
     id: str
@@ -339,6 +342,7 @@ class FileResponse(BaseModel):
     upload_date: str
     download_url: str
     share_url: str
+    owner_id: str
     owner_username: str
     owner_type: str
     is_public: bool
@@ -374,8 +378,65 @@ class DriveFileInfo(BaseModel):
 # Helper Functions
 # ============================================================================
 
+ADMIN_CREDS_PATH = ROOT_DIR / "ADMIN_CREDENTIALS.txt"
+
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
+
+
+async def ensure_admin_user():
+    """Create a default admin account on first boot if none exists.
+
+    Email + password are configurable via env (ADMIN_EMAIL / ADMIN_PASSWORD).
+    If ADMIN_PASSWORD is unset, a random password is generated and written to
+    backend/ADMIN_CREDENTIALS.txt (and printed once to the log) so the user can
+    log in. The file is git-ignored.
+    """
+    try:
+        existing = await db.users.find_one({"is_admin": True})
+        if existing:
+            return
+
+        email = os.getenv("ADMIN_EMAIL", "admin@unishare.app")
+        password = os.getenv("ADMIN_PASSWORD")
+        generated = False
+        if not password:
+            password = secrets.token_urlsafe(12)
+            generated = True
+
+        admin = User(
+            username="admin",
+            email=email,
+            password_hash=hash_password(password),
+            is_guest=False,
+            is_admin=True,
+            emoji="🛡️",
+        )
+        doc = admin.model_dump()
+        doc["created_date"] = doc["created_date"].isoformat()
+        await db.users.insert_one(doc)
+
+        if generated:
+            try:
+                ADMIN_CREDS_PATH.write_text(
+                    f"UniShare admin account\n"
+                    f"email:    {email}\n"
+                    f"password: {password}\n"
+                    f"(generated on first boot — delete this file once you've copied it)\n",
+                    encoding="utf-8",
+                )
+            except Exception as ex:
+                logger.warning(f"Could not write admin creds file: {ex}")
+            logger.warning("=" * 60)
+            logger.warning("ADMIN ACCOUNT CREATED")
+            logger.warning(f"  email:    {email}")
+            logger.warning(f"  password: {password}")
+            logger.warning(f"  creds also saved to: {ADMIN_CREDS_PATH}")
+            logger.warning("=" * 60)
+        else:
+            logger.info(f"Admin account ensured for {email}")
+    except Exception as e:
+        logger.error(f"ensure_admin_user failed: {e}")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
@@ -407,24 +468,43 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     
     return User(**user_doc)
 
-async def get_optional_user(authorization: str = Header(None)) -> Optional[User]:
-    """Get current user if token provided, otherwise None"""
-    if not authorization:
+async def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
+    """Dependency that requires the authenticated user to be an admin."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    return current_user
+
+
+async def get_optional_user(
+    authorization: str = Header(None),
+    token: Optional[str] = None,
+) -> Optional[User]:
+    """Get current user if token provided (header OR ?token= query), otherwise None.
+
+    The query-param fallback exists so <img>/<iframe>/<video> src= URLs (which
+    cannot set custom headers) can still authenticate against private files.
+    """
+    raw_token: Optional[str] = None
+    if authorization:
+        raw_token = authorization.replace("Bearer ", "")
+    elif token:
+        raw_token = token
+
+    if not raw_token:
         return None
-    
+
     try:
-        token = authorization.replace("Bearer ", "")
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(raw_token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
         if user_id is None:
             return None
     except JWTError:
         return None
-    
+
     user_doc = await db.users.find_one({"id": user_id}, {"_id": 0})
     if user_doc is None:
         return None
-    
+
     return User(**user_doc)
 
 async def check_data_limit(user: User, file_size: int) -> bool:
@@ -491,6 +571,8 @@ async def create_guest(request: Request, guest: GuestCreate):
             username=user.username,
             email=user.email,
             is_guest=user.is_guest,
+            is_admin=user.is_admin,
+            is_blocked=user.is_blocked,
             emoji=user.emoji,
             total_data_shared=user.total_data_shared,
             google_drive_connected=user.google_drive_connected,
@@ -534,6 +616,8 @@ async def register(request: Request, user_create: UserCreate):
             username=user.username,
             email=user.email,
             is_guest=user.is_guest,
+            is_admin=user.is_admin,
+            is_blocked=user.is_blocked,
             emoji=user.emoji,
             total_data_shared=user.total_data_shared,
             google_drive_connected=user.google_drive_connected,
@@ -559,25 +643,30 @@ async def login(request: Request, user_login: UserLogin):
             raise HTTPException(status_code=401, detail="Invalid email or password")
         
         user = User(**user_doc)
-        
+
         # Verify password
         if not user.password_hash or not verify_password(user_login.password, user.password_hash):
             raise HTTPException(status_code=401, detail="Invalid email or password")
-        
+
+        if user.is_blocked:
+            raise HTTPException(status_code=403, detail="This account has been blocked by an administrator")
+
         # Create access token
         access_token = create_access_token(data={"sub": user.id})
-        
+
         user_response = UserResponse(
             id=user.id,
             username=user.username,
             email=user.email,
             is_guest=user.is_guest,
+            is_admin=user.is_admin,
+            is_blocked=user.is_blocked,
             emoji=user.emoji,
             total_data_shared=user.total_data_shared,
             google_drive_connected=user.google_drive_connected,
             created_date=user_doc['created_date']
         )
-        
+
         return Token(access_token=access_token, token_type="bearer", user=user_response)
     
     except HTTPException:
@@ -585,6 +674,71 @@ async def login(request: Request, user_login: UserLogin):
     except Exception as e:
         logger.error(f"Login failed: {e}")
         raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
+
+async def _wipe_guest_data(user_id: str) -> dict:
+    """Delete a guest user's files (disk + DB), history, and the user doc."""
+    deleted_disk = 0
+    async for f in db.files.find(
+        {"owner_id": user_id, "source": "upload"},
+        {"_id": 0, "filename": 1},
+    ):
+        try:
+            p = UPLOAD_DIR / f["filename"]
+            if p.exists():
+                p.unlink()
+                deleted_disk += 1
+        except Exception as ex:
+            logger.warning(f"Failed to remove guest file {f.get('filename')}: {ex}")
+
+    files_res = await db.files.delete_many({"owner_id": user_id})
+    history_res = await db.history.delete_many({"user_id": user_id})
+    user_res = await db.users.delete_one({"id": user_id})
+    return {
+        "files_deleted": files_res.deleted_count,
+        "history_deleted": history_res.deleted_count,
+        "user_deleted": user_res.deleted_count,
+        "disk_files_removed": deleted_disk,
+    }
+
+
+@api_router.post("/auth/logout")
+async def logout(current_user: User = Depends(get_current_user)):
+    """Logout via explicit button click. Guest accounts are wiped; registered
+    accounts only clear the client-side token."""
+    try:
+        if not current_user.is_guest:
+            return {"success": True, "wiped": False}
+        stats = await _wipe_guest_data(current_user.id)
+        return {"success": True, "wiped": True, **stats}
+    except Exception as e:
+        logger.error(f"Logout failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Logout failed: {str(e)}")
+
+
+@api_router.post("/auth/logout-beacon")
+async def logout_beacon(token: Optional[str] = None):
+    """Beacon-friendly logout (called on tab close via navigator.sendBeacon,
+    which cannot set custom headers — token comes from query string).
+    Always returns 204 so the browser does not log errors during unload."""
+    from fastapi.responses import Response as RawResponse
+    try:
+        if not token:
+            return RawResponse(status_code=204)
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            user_id = payload.get("sub")
+        except JWTError:
+            return RawResponse(status_code=204)
+        if not user_id:
+            return RawResponse(status_code=204)
+        user_doc = await db.users.find_one({"id": user_id}, {"_id": 0, "is_guest": 1})
+        if user_doc and user_doc.get("is_guest"):
+            await _wipe_guest_data(user_id)
+        return RawResponse(status_code=204)
+    except Exception as e:
+        logger.warning(f"logout-beacon swallowed error: {e}")
+        from fastapi.responses import Response as RawResponse
+        return RawResponse(status_code=204)
 
 @api_router.get("/auth/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
@@ -594,11 +748,141 @@ async def get_me(current_user: User = Depends(get_current_user)):
         username=current_user.username,
         email=current_user.email,
         is_guest=current_user.is_guest,
+        is_admin=current_user.is_admin,
+        is_blocked=current_user.is_blocked,
         emoji=current_user.emoji,
         total_data_shared=current_user.total_data_shared,
         google_drive_connected=current_user.google_drive_connected,
         created_date=current_user.created_date.isoformat()
     )
+
+# ============================================================================
+# Admin Endpoints
+# ============================================================================
+
+def _serialize_user_doc(doc: dict) -> dict:
+    out = {
+        "id": doc.get("id"),
+        "username": doc.get("username"),
+        "email": doc.get("email"),
+        "is_guest": doc.get("is_guest", True),
+        "is_admin": doc.get("is_admin", False),
+        "is_blocked": doc.get("is_blocked", False),
+        "emoji": doc.get("emoji", "👤"),
+        "total_data_shared": doc.get("total_data_shared", 0),
+        "google_drive_connected": doc.get("google_drive_connected", False),
+        "created_date": doc.get("created_date"),
+    }
+    if isinstance(out["created_date"], datetime):
+        out["created_date"] = out["created_date"].isoformat()
+    return out
+
+
+def _serialize_file_doc(doc: dict) -> dict:
+    upload_date = doc.get("upload_date")
+    if isinstance(upload_date, datetime):
+        upload_date = upload_date.isoformat()
+    return {
+        "id": doc.get("id"),
+        "original_filename": doc.get("original_filename"),
+        "size": doc.get("size"),
+        "content_type": doc.get("content_type"),
+        "upload_date": upload_date,
+        "owner_id": doc.get("owner_id"),
+        "owner_username": doc.get("owner_username"),
+        "owner_type": doc.get("owner_type"),
+        "is_public": doc.get("is_public", True),
+        "source": doc.get("source", "upload"),
+    }
+
+
+@api_router.get("/admin/users")
+async def admin_list_users(admin: User = Depends(get_admin_user)):
+    docs = []
+    async for u in db.users.find({}, {"_id": 0, "password_hash": 0}):
+        docs.append(_serialize_user_doc(u))
+    return docs
+
+
+@api_router.get("/admin/files")
+async def admin_list_files(admin: User = Depends(get_admin_user)):
+    docs = []
+    async for f in db.files.find({}, {"_id": 0}):
+        docs.append(_serialize_file_doc(f))
+    return docs
+
+
+@api_router.delete("/admin/files/{file_id}")
+async def admin_delete_file(file_id: str, admin: User = Depends(get_admin_user)):
+    file_doc = await db.files.find_one({"id": file_id}, {"_id": 0})
+    if not file_doc:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if file_doc.get("source") == "upload":
+        try:
+            p = UPLOAD_DIR / file_doc["filename"]
+            if p.exists():
+                p.unlink()
+        except Exception as ex:
+            logger.warning(f"admin delete: disk unlink failed for {file_id}: {ex}")
+
+    await db.files.delete_one({"id": file_id})
+    await update_user_data_shared(file_doc["owner_id"], -file_doc.get("size", 0))
+    await log_history(admin.id, "admin_delete", file_doc.get("original_filename", file_id), file_id)
+    return {"success": True}
+
+
+@api_router.post("/admin/users/{user_id}/block")
+async def admin_block_user(user_id: str, admin: User = Depends(get_admin_user)):
+    if user_id == admin.id:
+        raise HTTPException(status_code=400, detail="You cannot block your own admin account")
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.get("is_admin"):
+        raise HTTPException(status_code=400, detail="Cannot block another admin")
+    await db.users.update_one({"id": user_id}, {"$set": {"is_blocked": True}})
+    return {"success": True, "is_blocked": True}
+
+
+@api_router.post("/admin/users/{user_id}/unblock")
+async def admin_unblock_user(user_id: str, admin: User = Depends(get_admin_user)):
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    await db.users.update_one({"id": user_id}, {"$set": {"is_blocked": False}})
+    return {"success": True, "is_blocked": False}
+
+
+@api_router.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, admin: User = Depends(get_admin_user)):
+    """Hard-delete a user plus all their files (disk + DB) and history."""
+    if user_id == admin.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own admin account")
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.get("is_admin"):
+        raise HTTPException(status_code=400, detail="Cannot delete another admin")
+
+    async for f in db.files.find({"owner_id": user_id, "source": "upload"}, {"_id": 0, "filename": 1}):
+        try:
+            p = UPLOAD_DIR / f["filename"]
+            if p.exists():
+                p.unlink()
+        except Exception as ex:
+            logger.warning(f"admin user-delete: disk unlink failed: {ex}")
+
+    files_res = await db.files.delete_many({"owner_id": user_id})
+    history_res = await db.history.delete_many({"user_id": user_id})
+    user_res = await db.users.delete_one({"id": user_id})
+    return {
+        "success": True,
+        "files_deleted": files_res.deleted_count,
+        "history_deleted": history_res.deleted_count,
+        "user_deleted": user_res.deleted_count,
+    }
+
 
 @api_router.get("/auth/google")
 async def google_auth():
@@ -826,6 +1110,7 @@ async def upload_file(
             upload_date=doc['upload_date'],
             download_url=f"/api/files/{file_id}/download",
             share_url=f"/api/files/{file_id}/download",
+            owner_id=current_user.id,
             owner_username=current_user.username,
             owner_type="guest" if current_user.is_guest else "user",
             is_public=is_public,
@@ -872,6 +1157,7 @@ async def get_files(current_user: Optional[User] = Depends(get_optional_user)):
                 upload_date=file_doc['upload_date'],
                 download_url=f"/api/files/{file_doc['id']}/download",
                 share_url=f"/api/files/{file_doc['id']}/download",
+                owner_id=file_doc.get('owner_id', ''),
                 owner_username=file_doc.get('owner_username', 'Unknown'),
                 owner_type=file_doc.get('owner_type', 'guest'),
                 is_public=file_doc.get('is_public', True),
@@ -1357,6 +1643,7 @@ async def share_drive_file(
             upload_date=doc['upload_date'],
             download_url=f"/api/files/{file_id}/download",
             share_url=f"/api/files/{file_id}/download",
+            owner_id=current_user.id,
             owner_username=current_user.username,
             owner_type="guest" if current_user.is_guest else "user",
             is_public=is_public,
@@ -1449,7 +1736,11 @@ async def add_security_headers(request: Request, call_next):
     
     # Security headers
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    # Preview endpoint must be iframable for inline PDF/text/Office viewer.
+    # Frontend (:3001) and backend (:8001) are different origins, so SAMEORIGIN
+    # would still block — omit the header entirely for /preview.
+    if "/preview" not in request.url.path:
+        response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"

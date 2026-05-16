@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { HardDrive, Download, ExternalLink, Loader2 } from 'lucide-react';
+import { isOfflineMode } from '../utils/offline';
 
 const GoogleDriveView = ({ token, user, onFileSelect }) => {
     const [files, setFiles] = useState([]);
@@ -8,6 +9,11 @@ const GoogleDriveView = ({ token, user, onFileSelect }) => {
     const [error, setError] = useState(null);
 
     useEffect(() => {
+        if (isOfflineMode()) {
+            setLoading(false);
+            setError('Offline mode is enabled. Google Drive is unavailable.');
+            return;
+        }
         if (user && user.google_drive_connected) {
             fetchDriveFiles();
         } else if (user && !user.google_drive_connected) {
@@ -34,6 +40,10 @@ const GoogleDriveView = ({ token, user, onFileSelect }) => {
     };
 
     const handleConnectDrive = async () => {
+        if (isOfflineMode()) {
+            alert('Google Drive requires internet access. Offline mode is enabled.');
+            return;
+        }
         try {
             const response = await axios.get(`${process.env.REACT_APP_BACKEND_URL}/api/drive/connect`, {
                 headers: { Authorization: `Bearer ${token}` }

@@ -4,6 +4,7 @@ import { Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom'
 import { Moon, Sun, LogOut, Upload as UploadIcon, HardDrive, History, LogIn, FileText, Menu, X } from 'lucide-react';
 import { useTheme } from './contexts/ThemeContext';
 import { useAuth } from './contexts/AuthContext';
+import { setAuthToken } from './utils/authStorage';
 import GuestModal from './components/GuestModal';
 import AuthModal from './components/AuthModal';
 import LoginPage from './components/LoginPage';
@@ -19,7 +20,12 @@ import GoogleDriveView from './components/GoogleDriveView';
 import HistoryView from './components/HistoryView';
 import UploadOptionsModal from './components/UploadOptionsModal'; // Changed from UploadModal
 import ReceiveFileView from './components/ReceiveFileView';
+import AdminView from './components/AdminView';
+import ConfirmModal from './components/ConfirmModal';
+import P2PReceivePromptModal from './components/P2PReceivePromptModal';
+import P2PReceivedPreviewModal from './components/P2PReceivedPreviewModal';
 import webrtcManager from './utils/webrtcManager2';
+import { isOfflineMode } from './utils/offline';
 import './App.css';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
@@ -52,6 +58,16 @@ function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
+  const [incomingOffer, setIncomingOffer] = useState(null);
+  const [receivedFile, setReceivedFile] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  const showToast = (message, kind = 'success') => {
+    setToast({ message, kind });
+    setTimeout(() => setToast(null), 3500);
+  };
 
   // Check if it's first visit
   useEffect(() => {
@@ -60,6 +76,32 @@ function App() {
       setShowWelcome(true);
     }
   }, []);
+
+  // Wipe guest data on tab close / page hide via sendBeacon.
+  // Beacons cannot set Authorization headers, so the token goes in the URL.
+  useEffect(() => {
+    if (!user || !user.is_guest || !token || token.startsWith('local-')) {
+      return undefined;
+    }
+    const beaconUrl = `${API}/auth/logout-beacon?token=${encodeURIComponent(token)}`;
+    const fire = () => {
+      try {
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(beaconUrl, new Blob([], { type: 'text/plain' }));
+        } else {
+          fetch(beaconUrl, { method: 'POST', keepalive: true }).catch(() => {});
+        }
+      } catch {
+        /* swallow */
+      }
+    };
+    window.addEventListener('pagehide', fire);
+    window.addEventListener('beforeunload', fire);
+    return () => {
+      window.removeEventListener('pagehide', fire);
+      window.removeEventListener('beforeunload', fire);
+    };
+  }, [user, token]);
 
   // Handle Google OAuth callback and Google Drive connection callback
   useEffect(() => {
@@ -71,7 +113,7 @@ function App() {
     const driveError = urlParams.get('drive_error');
 
     if (googleAuth === 'success' && tokenParam) {
-      localStorage.setItem('token', tokenParam);
+      setAuthToken(tokenParam);
       setToken(tokenParam);
 
       axios.get(`${API}/auth/me`, {
@@ -123,18 +165,38 @@ function App() {
     if (user) {
       fetchFiles();
       webrtcManager.connect(user.id, BACKEND_URL, user.username, user.emoji);
+      if (isOfflineMode()) {
+        console.info('Offline mode enabled. P2P will use LAN signaling only.');
+      }
       webrtcManager.updateUserInfo(user.username, user.emoji);
 
-      webrtcManager.onFileReceived = (filename, blob) => {
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-        alert(`Received file via P2P: ${filename}`);
+      webrtcManager.onFileReceived = (filename, blob, peerId, metadata = {}) => {
+        setReceivedFile({
+          fileName: filename,
+          blob,
+          peerId,
+          sender: metadata.sender,
+          mimeType: metadata.mimeType || blob.type
+        });
+        setDownloadProgress(null);
+      };
+
+      webrtcManager.onFileOffered = (offer) => {
+        setIncomingOffer(offer);
+      };
+
+      webrtcManager.onProgressUpdate = (update) => {
+        if (!update) return;
+        if (update.type === 'receiving') {
+          setDownloadProgress({
+            progress: update.progress || 0,
+            speed: update.speed || 0,
+            timeRemaining: update.timeRemaining || 0,
+            fileName: update.fileName || 'Incoming file'
+          });
+        } else if (update.type === 'declined') {
+          setDownloadProgress(null);
+        }
       };
     }
 
@@ -332,16 +394,26 @@ function App() {
     }
   };
 
-  const handleDelete = async (file) => {
-    if (!window.confirm('Are you sure you want to delete this file?')) return;
+  const handleDelete = (file) => {
+    setPendingDelete(file);
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    setDeleteBusy(true);
     try {
-      await axios.delete(`${API}/files/${file.id}`, {
+      await axios.delete(`${API}/files/${pendingDelete.id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       await fetchFiles();
+      showToast(`Deleted "${pendingDelete.original_filename}"`, 'success');
+      setPendingDelete(null);
     } catch (error) {
       console.error('Delete failed:', error);
-      alert('Failed to delete file');
+      const detail = error.response?.data?.detail || 'Failed to delete file';
+      showToast(detail, 'error');
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -351,6 +423,12 @@ function App() {
   };
 
   const handleConnectDrive = async () => {
+    if (isOfflineMode()) {
+      alert('Google Drive requires internet access. Offline mode is enabled.');
+      setDriveConfigured(false);
+      return;
+    }
+
     try {
       const response = await axios.get(`${API}/drive/connect`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -506,6 +584,20 @@ function App() {
                   <span>History</span>
                 </div>
               </Link>
+              {user && user.is_admin && (
+                <Link
+                  to="/admin"
+                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${location.pathname === '/admin'
+                    ? 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                    }`}
+                >
+                  <div className="flex items-center space-x-2">
+                    <span>🛡️</span>
+                    <span>Admin</span>
+                  </div>
+                </Link>
+              )}
             </nav>
 
             <div className="flex items-center space-x-3">
@@ -702,6 +794,9 @@ function App() {
             } />
             <Route path="/history" element={<HistoryView token={token} />} />
             <Route path="/receive" element={<ReceiveFileView />} />
+            {user && user.is_admin && (
+              <Route path="/admin" element={<AdminView token={token} currentUser={user} />} />
+            )}
           </Routes>
         )}
       </main>
@@ -717,6 +812,56 @@ function App() {
           }}
         />
       )}
+
+      <ConfirmModal
+        open={!!pendingDelete}
+        title="Delete file?"
+        message={
+          pendingDelete
+            ? `"${pendingDelete.original_filename}" will be permanently removed from the server. This cannot be undone.`
+            : ''
+        }
+        confirmLabel="Delete"
+        destructive
+        busy={deleteBusy}
+        onConfirm={confirmDelete}
+        onCancel={() => !deleteBusy && setPendingDelete(null)}
+      />
+
+      {toast && (
+        <div
+          className={`fixed bottom-6 right-6 z-[90] px-4 py-3 rounded-lg shadow-lg text-sm font-medium ${
+            toast.kind === 'error'
+              ? 'bg-red-600 text-white'
+              : 'bg-green-600 text-white'
+          }`}
+        >
+          {toast.message}
+        </div>
+      )}
+
+      {/* P2P incoming file offer */}
+      <P2PReceivePromptModal
+        offer={incomingOffer}
+        onAccept={() => {
+          if (incomingOffer) {
+            webrtcManager.respondToOffer(incomingOffer.peerId, incomingOffer.fileId, true);
+          }
+          setIncomingOffer(null);
+        }}
+        onDecline={() => {
+          if (incomingOffer) {
+            webrtcManager.respondToOffer(incomingOffer.peerId, incomingOffer.fileId, false);
+          }
+          setIncomingOffer(null);
+        }}
+      />
+
+      {/* P2P received file preview */}
+      <P2PReceivedPreviewModal
+        received={receivedFile}
+        onClose={() => setReceivedFile(null)}
+      />
 
       {/* Progress Indicators */}
       {uploadProgress && (

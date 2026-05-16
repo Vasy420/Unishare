@@ -31,6 +31,10 @@ dist/
 dist
 
 # Environment files (comprehensive coverage)
+.env
+**/.env
+.env.local
+.env.*.local
 
 *token.json*
 *credentials.json*
@@ -41,6 +45,7 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 dump.rdb
+*.log
 
 # System files
 .DS_Store
@@ -77,4 +82,25 @@ agenthub/agents/youtube/db
 .cache/
 
 # Mobile development
-android-sdk/ 
+android-sdk/
+
+# Admin bootstrap credentials (generated on first boot)
+ADMIN_CREDENTIALS.txt
+backend/ADMIN_CREDENTIALS.txt
+
+# Uploads (user data)
+backend/uploads/
+
+# Docker
+.env.example
+backend/.env.example
+
+# Development artifacts
+.claude/
+.playwright-mcp/
+test_*.js
+test_*.txt
+test_*.png
+test_*.jpg
+test_*.jpeg
+frontend.log

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Copy, Users, HardDrive, Check, Loader, QrCode, Download } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import webrtcManager from '../utils/webrtcManager2';
+import { isOfflineMode } from '../utils/offline';
 
 const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
   const [activeTab, setActiveTab] = useState('link');
@@ -10,6 +11,7 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
   const [selectedPeer, setSelectedPeer] = useState(null);
   const [sharing, setSharing] = useState(false);
   const [shareProgress, setShareProgress] = useState(0);
+  const [shareStatus, setShareStatus] = useState(null); // {kind: 'success'|'error', message: string}
   const qrCodeRef = useRef(null);
 
   useEffect(() => {
@@ -53,48 +55,58 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
     setSelectedPeer(peerId);
     setSharing(true);
     setShareProgress(0);
+    setShareStatus(null);
 
     try {
-      // First, we need to download the file to share it via P2P
+      if (isOfflineMode() && !backendUrl) {
+        throw new Error('Offline mode requires a local backend URL. Check REACT_APP_BACKEND_URL.');
+      }
+
       const downloadUrl = `${backendUrl}${file.download_url}`;
       const response = await fetch(downloadUrl);
-      
+
       if (!response.ok) {
         throw new Error(`Failed to fetch file: ${response.statusText}`);
       }
-      
+
       const blob = await response.blob();
       const fileToShare = new File([blob], file.original_filename, { type: file.content_type });
 
-      // Initiate connection if not already connected
-      if (!webrtcManager.dataChannels.has(peerId)) {
-        console.log('Initiating WebRTC connection to peer:', peerId);
-        await webrtcManager.initiateConnection(peerId);
-        // Wait for connection to establish
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        
-        // Check if connection is established
-        if (!webrtcManager.dataChannels.has(peerId)) {
-          throw new Error('Failed to establish P2P connection');
-        }
+      const dc = webrtcManager.dataChannels.get(peerId);
+      if (!dc || dc.readyState !== 'open') {
+        if (!dc) await webrtcManager.initiateConnection(peerId);
+        await webrtcManager.waitForDataChannelOpen(peerId, 10000);
       }
 
-      console.log('Sending file via P2P:', fileToShare.name);
-      // Send file
-      await webrtcManager.sendFile(peerId, fileToShare, ({ progress }) => {
-        setShareProgress(progress);
+      await webrtcManager.sendFile(peerId, fileToShare, (update) => {
+        if (update?.progress !== undefined) {
+          setShareProgress(update.progress);
+        }
       });
 
-      alert('File shared successfully via P2P!');
-      setSharing(false);
-      setShareProgress(0);
-      setSelectedPeer(null);
+      setShareStatus({ kind: 'success', message: 'File shared successfully!' });
+      setTimeout(() => {
+        setShareStatus(null);
+        setShareProgress(0);
+        setSelectedPeer(null);
+      }, 3000);
     } catch (error) {
       console.error('P2P share failed:', error);
-      alert('Failed to share file via P2P: ' + error.message);
-      setSharing(false);
+      const msg = (error.message || '').toLowerCase();
+      if (msg.includes('declined')) {
+        setShareStatus({ kind: 'error', message: 'Recipient declined the file.' });
+      } else if (msg.includes('did not respond')) {
+        setShareStatus({ kind: 'error', message: 'Recipient did not respond.' });
+      } else {
+        setShareStatus({ kind: 'error', message: 'Send failed: ' + error.message });
+      }
       setShareProgress(0);
-      setSelectedPeer(null);
+      setTimeout(() => {
+        setShareStatus(null);
+        setSelectedPeer(null);
+      }, 4000);
+    } finally {
+      setSharing(false);
     }
   };
 
@@ -240,6 +252,22 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
 
           {activeTab === 'p2p' && (
             <div className="space-y-4">
+              {shareStatus && (
+                <div className={`p-3 rounded-lg border text-sm ${
+                  shareStatus.kind === 'success'
+                    ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300'
+                }`}>
+                  {shareStatus.message}
+                </div>
+              )}
+              {isOfflineMode() && (
+                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
+                  <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                    Offline mode is enabled. Use "Share (No Upload)" from the upload modal to send local files directly between tabs.
+                  </p>
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
                   Online Users ({onlineUsers.length})
