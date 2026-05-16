@@ -96,6 +96,7 @@ backend/uploads/
 backend/.env.example
 
 # Development artifacts
+.emergent/
 .claude/
 .playwright-mcp/
 test_*.js
