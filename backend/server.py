@@ -167,6 +167,10 @@ async def lifespan(app: FastAPI):
         # History collection indexes
         await db.history.create_index([("user_id", 1), ("timestamp", -1)])
 
+        # Chat collection indexes
+        await db.chat_messages.create_index([("created_at", -1)])
+        await db.chat_messages.create_index("id", unique=True)
+
         logger.info("✅ Database indexes created successfully")
         logger.info(f"✅ Configured BACKEND_URL: {os.getenv('BACKEND_URL')}")
 
@@ -176,11 +180,17 @@ async def lifespan(app: FastAPI):
         logger.info("✅ UniShare API started - Windows Compatible Mode")
     except Exception as e:
         logger.warning(f"⚠️ Index creation warning: {e}")
-    
+
+    # Background: registered user message TTL sweep (1 day)
+    ttl_task = asyncio.create_task(_registered_msg_ttl_loop())
+
     yield
-    
+
     # Shutdown
     try:
+        ttl_task.cancel()
+        for t in list(guest_msg_cleanup_tasks.values()):
+            t.cancel()
         client.close()
         logger.info("✅ Database connection closed")
     except Exception as e:
@@ -206,6 +216,88 @@ api_router = APIRouter(prefix="/api")
 
 # Security
 security = HTTPBearer()
+
+
+# ============================================================================
+# Chat message TTL infrastructure
+# ============================================================================
+import asyncio
+
+# Pending guest cleanup tasks keyed by user_id. Cancelled on reconnect within window.
+guest_msg_cleanup_tasks: Dict[str, "asyncio.Task"] = {}
+GUEST_MSG_GRACE_SECONDS = 5 * 60          # 5 minutes after WS disconnect
+REGISTERED_MSG_TTL_SECONDS = 24 * 60 * 60  # 1 day for registered users
+REGISTERED_CLEANUP_INTERVAL = 60 * 5       # sweep registered TTL every 5 minutes
+
+
+async def _delete_user_messages(user_id: str, reason: str) -> int:
+    """Soft-delete every non-deleted message authored by user_id."""
+    result = await db.chat_messages.update_many(
+        {"user_id": user_id, "deleted": {"$ne": True}},
+        {"$set": {"deleted": True, "deleted_by": "ttl"}},
+    )
+    if result.modified_count > 0:
+        logger.info(f"TTL ({reason}) cleared {result.modified_count} messages for user {user_id}")
+        await manager.broadcast_all({
+            "type": "chat_clear",
+            "scope": "user",
+            "user_id": user_id,
+            "deleted_by": "ttl",
+        })
+    return result.modified_count
+
+
+async def _guest_cleanup_after_grace(user_id: str):
+    try:
+        await asyncio.sleep(GUEST_MSG_GRACE_SECONDS)
+        await _delete_user_messages(user_id, "guest-disconnect")
+    except asyncio.CancelledError:
+        # User reconnected within grace window — keep messages.
+        raise
+    finally:
+        guest_msg_cleanup_tasks.pop(user_id, None)
+
+
+def schedule_guest_msg_cleanup(user_id: str):
+    """Start a 5-min countdown to wipe a disconnected guest's chat messages."""
+    existing = guest_msg_cleanup_tasks.get(user_id)
+    if existing and not existing.done():
+        return
+    guest_msg_cleanup_tasks[user_id] = asyncio.create_task(_guest_cleanup_after_grace(user_id))
+
+
+def cancel_guest_msg_cleanup(user_id: str):
+    """Cancel a pending guest message cleanup (user reconnected)."""
+    task = guest_msg_cleanup_tasks.pop(user_id, None)
+    if task and not task.done():
+        task.cancel()
+
+
+async def _registered_msg_ttl_loop():
+    """Background sweep: delete messages from registered users older than 1 day."""
+    while True:
+        try:
+            await asyncio.sleep(REGISTERED_CLEANUP_INTERVAL)
+            cutoff = (datetime.now(timezone.utc) - timedelta(seconds=REGISTERED_MSG_TTL_SECONDS)).isoformat()
+            # Find registered authors via users collection
+            registered_ids = {u["id"] async for u in db.users.find({"is_guest": {"$ne": True}}, {"id": 1})}
+            if not registered_ids:
+                continue
+            result = await db.chat_messages.update_many(
+                {
+                    "user_id": {"$in": list(registered_ids)},
+                    "created_at": {"$lt": cutoff},
+                    "deleted": {"$ne": True},
+                },
+                {"$set": {"deleted": True, "deleted_by": "ttl"}},
+            )
+            if result.modified_count > 0:
+                logger.info(f"TTL (registered) cleared {result.modified_count} messages older than 1 day")
+                await manager.broadcast_all({"type": "chat_clear", "scope": "ttl-sweep", "deleted_by": "ttl"})
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Registered TTL loop error: {e}")
 
 
 
@@ -247,13 +339,18 @@ class ConnectionManager:
     async def broadcast_online_users(self):
         """Notify all connected users about who's online"""
         online_users = [
-            {"id": uid, **info} 
+            {"id": uid, **info}
             for uid, info in self.user_info.items()
         ]
         message = {"type": "online_users", "users": online_users}
         for user_id in list(self.active_connections.keys()):
             await self.send_message(user_id, message)
-    
+
+    async def broadcast_all(self, message: dict):
+        """Send a message to every connected client (chat fan-out)."""
+        for user_id in list(self.active_connections.keys()):
+            await self.send_message(user_id, message)
+
     def get_online_users(self):
         return [{"id": uid, **info} for uid, info in self.user_info.items()]
 
@@ -288,7 +385,10 @@ class User(BaseModel):
     is_guest: bool = True
     is_admin: bool = False
     is_blocked: bool = False
+    muted_until: Optional[datetime] = None
+    last_seen: Optional[datetime] = None
     emoji: str = "👤"
+    avatar_url: Optional[str] = None  # DiceBear-style URL for registered users
     total_data_shared: int = 0  # in bytes
     google_drive_connected: bool = False
     google_id: Optional[str] = None  # Google OAuth ID
@@ -305,6 +405,7 @@ class UserResponse(BaseModel):
     is_admin: bool = False
     is_blocked: bool = False
     emoji: str
+    avatar_url: Optional[str] = None
     total_data_shared: int
     google_drive_connected: bool
     created_date: str
@@ -332,6 +433,7 @@ class FileMetadata(BaseModel):
     source: str = "upload"  # "upload" or "google_drive"
     drive_file_id: Optional[str] = None
     encrypted_key: Optional[str] = None
+    reactions: List[str] = Field(default_factory=list)
 
 class FileResponse(BaseModel):
     id: str
@@ -350,6 +452,8 @@ class FileResponse(BaseModel):
     source: str
     drive_file_id: Optional[str] = None
     shared_with_users: List[str] = []
+    reaction_count: int = 0
+    reacted: bool = False
 
 class HistoryResponse(BaseModel):
     id: str
@@ -365,6 +469,34 @@ class HistoryResponse(BaseModel):
     file_name: str
     timestamp: str
     details: Optional[str]
+
+
+class ChatMessage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    username: str
+    emoji: str = "👤"
+    avatar_url: Optional[str] = None
+    is_admin: bool = False
+    content: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    edited_at: Optional[datetime] = None
+    deleted: bool = False
+    deleted_by: Optional[str] = None
+    pinned: bool = False
+    reply_to: Optional[str] = None
+    reactions: Dict[str, List[str]] = Field(default_factory=dict)
+
+
+class ChatMessageCreate(BaseModel):
+    content: str
+    reply_to: Optional[str] = None
+
+
+class ChatMessageEdit(BaseModel):
+    content: str
+
 
 class DriveFileInfo(BaseModel):
     id: str
@@ -465,7 +597,14 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     user_doc = await db.users.find_one({"id": user_id}, {"_id": 0})
     if user_doc is None:
         raise HTTPException(status_code=401, detail="User not found")
-    
+
+    # Best-effort update of last_seen so the directory shows "last active"
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        await db.users.update_one({"id": user_id}, {"$set": {"last_seen": now_iso}})
+    except Exception:
+        pass
+
     return User(**user_doc)
 
 async def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
@@ -662,13 +801,14 @@ async def login(request: Request, user_login: UserLogin):
             is_admin=user.is_admin,
             is_blocked=user.is_blocked,
             emoji=user.emoji,
+            avatar_url=user.avatar_url,
             total_data_shared=user.total_data_shared,
             google_drive_connected=user.google_drive_connected,
             created_date=user_doc['created_date']
         )
 
         return Token(access_token=access_token, token_type="bearer", user=user_response)
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -692,6 +832,15 @@ async def _wipe_guest_data(user_id: str) -> dict:
 
     files_res = await db.files.delete_many({"owner_id": user_id})
     history_res = await db.history.delete_many({"user_id": user_id})
+    # Soft-delete this guest's chat messages so peers see "Message deleted" rather than orphan text.
+    await db.chat_messages.update_many(
+        {"user_id": user_id, "deleted": {"$ne": True}},
+        {"$set": {"deleted": True, "deleted_by": "ttl"}},
+    )
+    try:
+        await manager.broadcast_all({"type": "chat_clear", "scope": "user", "user_id": user_id, "deleted_by": "ttl"})
+    except Exception:
+        pass
     user_res = await db.users.delete_one({"id": user_id})
     return {
         "files_deleted": files_res.deleted_count,
@@ -751,10 +900,26 @@ async def get_me(current_user: User = Depends(get_current_user)):
         is_admin=current_user.is_admin,
         is_blocked=current_user.is_blocked,
         emoji=current_user.emoji,
+        avatar_url=current_user.avatar_url,
         total_data_shared=current_user.total_data_shared,
         google_drive_connected=current_user.google_drive_connected,
         created_date=current_user.created_date.isoformat()
     )
+
+
+@api_router.patch("/auth/me/avatar")
+async def update_avatar(payload: dict, current_user: User = Depends(get_current_user)):
+    """Set or clear the user's DiceBear avatar URL. Guests are not allowed."""
+    if current_user.is_guest:
+        raise HTTPException(status_code=403, detail="Guests cannot set an avatar")
+    url = payload.get("avatar_url")
+    if url is not None:
+        if not isinstance(url, str) or len(url) > 512:
+            raise HTTPException(status_code=400, detail="Invalid avatar URL")
+        if url and not url.startswith("https://api.dicebear.com/"):
+            raise HTTPException(status_code=400, detail="Only DiceBear avatar URLs are allowed")
+    await db.users.update_one({"id": current_user.id}, {"$set": {"avatar_url": url or None}})
+    return {"success": True, "avatar_url": url or None}
 
 # ============================================================================
 # Admin Endpoints
@@ -768,6 +933,7 @@ def _serialize_user_doc(doc: dict) -> dict:
         "is_guest": doc.get("is_guest", True),
         "is_admin": doc.get("is_admin", False),
         "is_blocked": doc.get("is_blocked", False),
+        "muted_until": doc.get("muted_until"),
         "emoji": doc.get("emoji", "👤"),
         "total_data_shared": doc.get("total_data_shared", 0),
         "google_drive_connected": doc.get("google_drive_connected", False),
@@ -775,6 +941,8 @@ def _serialize_user_doc(doc: dict) -> dict:
     }
     if isinstance(out["created_date"], datetime):
         out["created_date"] = out["created_date"].isoformat()
+    if isinstance(out["muted_until"], datetime):
+        out["muted_until"] = out["muted_until"].isoformat()
     return out
 
 
@@ -882,6 +1050,327 @@ async def admin_delete_user(user_id: str, admin: User = Depends(get_admin_user))
         "history_deleted": history_res.deleted_count,
         "user_deleted": user_res.deleted_count,
     }
+
+
+@api_router.post("/admin/users/{user_id}/mute")
+async def admin_mute_user(user_id: str, minutes: int = 10, admin: User = Depends(get_admin_user)):
+    """Mute a user from chat for `minutes` minutes."""
+    if user_id == admin.id:
+        raise HTTPException(status_code=400, detail="You cannot mute yourself")
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.get("is_admin"):
+        raise HTTPException(status_code=400, detail="Cannot mute another admin")
+    until = datetime.now(timezone.utc) + timedelta(minutes=max(1, minutes))
+    await db.users.update_one({"id": user_id}, {"$set": {"muted_until": until.isoformat()}})
+    await manager.broadcast_all({
+        "type": "chat_mute",
+        "user_id": user_id,
+        "muted_until": until.isoformat(),
+    })
+    return {"success": True, "muted_until": until.isoformat()}
+
+
+@api_router.post("/admin/users/{user_id}/unmute")
+async def admin_unmute_user(user_id: str, admin: User = Depends(get_admin_user)):
+    await db.users.update_one({"id": user_id}, {"$set": {"muted_until": None}})
+    await manager.broadcast_all({
+        "type": "chat_mute",
+        "user_id": user_id,
+        "muted_until": None,
+    })
+    return {"success": True}
+
+
+@api_router.patch("/admin/users/{user_id}/rename")
+async def admin_rename_user(user_id: str, payload: dict, admin: User = Depends(get_admin_user)):
+    new_name = (payload.get("username") or "").strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Username is required")
+    if len(new_name) < 2 or len(new_name) > 32:
+        raise HTTPException(status_code=400, detail="Username must be 2-32 characters")
+    if user_id == admin.id:
+        raise HTTPException(status_code=400, detail="Cannot rename yourself here")
+
+    # Check uniqueness across users + currently-connected guest sessions
+    existing = await db.users.find_one({"username": new_name, "id": {"$ne": user_id}}, {"_id": 0, "id": 1})
+    if existing:
+        raise HTTPException(status_code=409, detail="Username already taken")
+
+    db_user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if db_user:
+        await db.users.update_one({"id": user_id}, {"$set": {"username": new_name}})
+        # Reflect in past chat messages so history shows updated handle
+        await db.chat_messages.update_many({"user_id": user_id}, {"$set": {"username": new_name}})
+
+    # Update live connection info for guest or registered user
+    if user_id in manager.user_info:
+        manager.user_info[user_id]["username"] = new_name
+        await manager.broadcast_online_users()
+
+    return {"success": True, "user_id": user_id, "username": new_name}
+
+
+@api_router.get("/users/directory")
+async def users_directory(current_user: User = Depends(get_current_user)):
+    """List registered users + online status from the ConnectionManager.
+    Guest users are excluded (ephemeral). Includes the caller too."""
+    online_ids = set(manager.active_connections.keys())
+    docs = []
+    async for u in db.users.find(
+        {"is_guest": {"$ne": True}},
+        {"_id": 0, "id": 1, "username": 1, "emoji": 1, "avatar_url": 1, "is_admin": 1,
+         "is_blocked": 1, "muted_until": 1, "last_seen": 1},
+    ):
+        info = manager.user_info.get(u["id"]) or {}
+        docs.append({
+            "id": u["id"],
+            "username": u["username"],
+            "emoji": info.get("emoji") or u.get("emoji") or "👤",
+            "avatar_url": u.get("avatar_url"),
+            "is_admin": u.get("is_admin", False),
+            "is_blocked": u.get("is_blocked", False),
+            "muted_until": u.get("muted_until"),
+            "last_seen": u.get("last_seen"),
+            "online": u["id"] in online_ids,
+        })
+    # Guests currently online are surfaced too so the chat sidebar sees them
+    for uid, info in manager.user_info.items():
+        if not any(d["id"] == uid for d in docs):
+            docs.append({
+                "id": uid,
+                "username": info.get("username") or "Guest",
+                "emoji": info.get("emoji") or "👤",
+                "is_admin": False,
+                "is_blocked": False,
+                "muted_until": None,
+                "last_seen": info.get("connected_at"),
+                "online": True,
+                "is_guest": True,
+            })
+    docs.sort(key=lambda d: (not d.get("online", False), d["username"].lower()))
+    return docs
+
+
+# ============================================================================
+# Chat Endpoints
+# ============================================================================
+
+CHAT_REACTION_LIMIT = 8
+CHAT_MESSAGE_MAX_LEN = 2000
+
+def _serialize_chat(doc: dict) -> dict:
+    out = dict(doc)
+    out.pop("_id", None)
+    for k in ("created_at", "edited_at"):
+        v = out.get(k)
+        if isinstance(v, datetime):
+            out[k] = v.isoformat()
+    # Strip content for deleted messages; keep `deleted` and `deleted_by` so UI can render placeholder.
+    if out.get("deleted"):
+        out["content"] = ""
+        out["reactions"] = {}
+        out["pinned"] = False
+    return out
+
+
+def _is_currently_muted(user_doc: dict) -> Optional[str]:
+    raw = user_doc.get("muted_until") if user_doc else None
+    if not raw:
+        return None
+    if isinstance(raw, datetime):
+        until = raw
+    else:
+        try:
+            until = datetime.fromisoformat(raw)
+        except Exception:
+            return None
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    if until > datetime.now(timezone.utc):
+        return until.isoformat()
+    return None
+
+
+@api_router.get("/chat/messages")
+async def chat_list(limit: int = 50, before: Optional[str] = None,
+                    current_user: User = Depends(get_current_user)):
+    limit = max(1, min(limit, 200))
+    # Include deleted msgs so UI can show "Message deleted" placeholder; content is stripped in _serialize_chat.
+    query: dict = {}
+    if before:
+        try:
+            query["created_at"] = {"$lt": datetime.fromisoformat(before)}
+        except Exception:
+            pass
+    cursor = db.chat_messages.find(query, {"_id": 0}).sort("created_at", -1).limit(limit)
+    docs = [_serialize_chat(d) async for d in cursor]
+    docs.reverse()
+    return docs
+
+
+@api_router.post("/chat/messages")
+async def chat_send(payload: ChatMessageCreate, current_user: User = Depends(get_current_user)):
+    if current_user.is_blocked:
+        raise HTTPException(status_code=403, detail="Account is blocked")
+
+    fresh_user = await db.users.find_one({"id": current_user.id}, {"_id": 0})
+    muted_until = _is_currently_muted(fresh_user)
+    if muted_until:
+        raise HTTPException(status_code=403, detail=f"You are muted until {muted_until}")
+
+    content = (payload.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Message is empty")
+    if len(content) > CHAT_MESSAGE_MAX_LEN:
+        raise HTTPException(status_code=400, detail=f"Message exceeds {CHAT_MESSAGE_MAX_LEN} chars")
+
+    msg = ChatMessage(
+        user_id=current_user.id,
+        username=current_user.username,
+        emoji=current_user.emoji,
+        avatar_url=current_user.avatar_url,
+        is_admin=current_user.is_admin,
+        content=content,
+        reply_to=payload.reply_to,
+    )
+    doc = msg.model_dump()
+    doc["created_at"] = doc["created_at"].isoformat()
+    if doc.get("edited_at"):
+        doc["edited_at"] = doc["edited_at"].isoformat()
+    await db.chat_messages.insert_one(doc)
+    payload_out = _serialize_chat(doc)
+    await manager.broadcast_all({"type": "chat_new", "message": payload_out})
+    return payload_out
+
+
+@api_router.patch("/chat/messages/{message_id}")
+async def chat_edit(message_id: str, payload: ChatMessageEdit,
+                    current_user: User = Depends(get_current_user)):
+    msg = await db.chat_messages.find_one({"id": message_id}, {"_id": 0})
+    if not msg or msg.get("deleted"):
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg["user_id"] != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not your message")
+
+    content = (payload.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Message is empty")
+    if len(content) > CHAT_MESSAGE_MAX_LEN:
+        raise HTTPException(status_code=400, detail=f"Message exceeds {CHAT_MESSAGE_MAX_LEN} chars")
+
+    edited_at = datetime.now(timezone.utc).isoformat()
+    await db.chat_messages.update_one(
+        {"id": message_id},
+        {"$set": {"content": content, "edited_at": edited_at}},
+    )
+    updated = await db.chat_messages.find_one({"id": message_id}, {"_id": 0})
+    payload_out = _serialize_chat(updated)
+    await manager.broadcast_all({"type": "chat_edit", "message": payload_out})
+    return payload_out
+
+
+@api_router.delete("/chat/messages/{message_id}")
+async def chat_delete_message(message_id: str, current_user: User = Depends(get_current_user)):
+    msg = await db.chat_messages.find_one({"id": message_id}, {"_id": 0})
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg["user_id"] != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not your message")
+    deleted_by = "admin" if current_user.is_admin and msg["user_id"] != current_user.id else "self"
+    await db.chat_messages.update_one(
+        {"id": message_id},
+        {"$set": {"deleted": True, "deleted_by": deleted_by}},
+    )
+    await manager.broadcast_all({
+        "type": "chat_delete",
+        "message_id": message_id,
+        "deleted_by": deleted_by,
+    })
+    return {"success": True}
+
+
+@api_router.post("/chat/messages/{message_id}/react")
+async def chat_react(message_id: str, emoji: str, current_user: User = Depends(get_current_user)):
+    emoji = (emoji or "").strip()
+    if not emoji or len(emoji) > 8:
+        raise HTTPException(status_code=400, detail="Invalid reaction")
+    msg = await db.chat_messages.find_one({"id": message_id}, {"_id": 0})
+    if not msg or msg.get("deleted"):
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    reactions = msg.get("reactions") or {}
+    users = reactions.get(emoji, [])
+    if current_user.id in users:
+        users = [u for u in users if u != current_user.id]
+    else:
+        if len(users) >= 500:
+            raise HTTPException(status_code=400, detail="Reaction limit reached")
+        users.append(current_user.id)
+    if users:
+        reactions[emoji] = users
+    else:
+        reactions.pop(emoji, None)
+    if len(reactions) > CHAT_REACTION_LIMIT:
+        # Drop the least-populated reaction to bound the dict
+        smallest = min(reactions.keys(), key=lambda k: len(reactions[k]))
+        reactions.pop(smallest, None)
+
+    await db.chat_messages.update_one({"id": message_id}, {"$set": {"reactions": reactions}})
+    await manager.broadcast_all({
+        "type": "chat_react",
+        "message_id": message_id,
+        "reactions": reactions,
+    })
+    return {"reactions": reactions}
+
+
+@api_router.delete("/chat/messages")
+async def chat_clear_own(current_user: User = Depends(get_current_user)):
+    """Soft-delete all messages sent by the current user."""
+    result = await db.chat_messages.update_many(
+        {"user_id": current_user.id, "deleted": {"$ne": True}},
+        {"$set": {"deleted": True, "deleted_by": "self"}},
+    )
+    await manager.broadcast_all({
+        "type": "chat_clear",
+        "scope": "user",
+        "user_id": current_user.id,
+        "deleted_by": "self",
+    })
+    return {"deleted": result.modified_count}
+
+
+@api_router.delete("/admin/chat/messages")
+async def chat_clear_all(admin: User = Depends(get_admin_user)):
+    """Admin: soft-delete every non-deleted chat message."""
+    result = await db.chat_messages.update_many(
+        {"deleted": {"$ne": True}},
+        {"$set": {"deleted": True, "deleted_by": "admin"}},
+    )
+    await manager.broadcast_all({
+        "type": "chat_clear",
+        "scope": "all",
+        "deleted_by": "admin",
+    })
+    return {"deleted": result.modified_count}
+
+
+@api_router.post("/chat/messages/{message_id}/pin")
+async def chat_pin(message_id: str, admin: User = Depends(get_admin_user)):
+    """Admin: toggle pinned state for a message."""
+    msg = await db.chat_messages.find_one({"id": message_id}, {"_id": 0})
+    if not msg or msg.get("deleted"):
+        raise HTTPException(status_code=404, detail="Message not found")
+    new_pinned = not msg.get("pinned", False)
+    await db.chat_messages.update_one({"id": message_id}, {"$set": {"pinned": new_pinned}})
+    await manager.broadcast_all({
+        "type": "chat_pin",
+        "message_id": message_id,
+        "pinned": new_pinned,
+    })
+    return {"pinned": new_pinned}
 
 
 @api_router.get("/auth/google")
@@ -1050,10 +1539,18 @@ async def upload_file(
         file_size = 0
         content = await file.read()
         file_size = len(content)
-        
+
+        # Hard cloud-upload cap (use P2P for anything larger)
+        CLOUD_UPLOAD_MAX = 100 * 1024 * 1024
+        if file_size > CLOUD_UPLOAD_MAX:
+            raise HTTPException(
+                status_code=413,
+                detail="File exceeds the 100 MB cloud upload limit. Send it directly to a peer instead."
+            )
+
         if not await check_data_limit(current_user, file_size):
             raise HTTPException(
-                status_code=403, 
+                status_code=403,
                 detail=f"Guest data limit exceeded (2GB). Please create an account to continue sharing."
             )
         
@@ -1163,7 +1660,9 @@ async def get_files(current_user: Optional[User] = Depends(get_optional_user)):
                 is_public=file_doc.get('is_public', True),
                 source=file_doc.get('source', 'upload'),
                 drive_file_id=file_doc.get('drive_file_id'),
-                shared_with_users=file_doc.get('shared_with_users', [])
+                shared_with_users=file_doc.get('shared_with_users', []),
+                reaction_count=len(file_doc.get('reactions') or []),
+                reacted=(current_user is not None and current_user.id in (file_doc.get('reactions') or []))
             ))
         
         return file_responses
@@ -1266,6 +1765,23 @@ async def delete_file(file_id: str, current_user: User = Depends(get_current_use
         logger.error(f"Delete failed: {e}")
         raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
 
+@api_router.post("/files/{file_id}/react")
+async def react_to_file(file_id: str, current_user: User = Depends(get_current_user)):
+    """Toggle the current user's reaction (heart) on a file."""
+    file_doc = await db.files.find_one({"id": file_id}, {"_id": 0})
+    if not file_doc:
+        raise HTTPException(status_code=404, detail="File not found")
+    reactions = file_doc.get("reactions") or []
+    if current_user.id in reactions:
+        reactions = [u for u in reactions if u != current_user.id]
+        reacted = False
+    else:
+        reactions.append(current_user.id)
+        reacted = True
+    await db.files.update_one({"id": file_id}, {"$set": {"reactions": reactions}})
+    return {"reaction_count": len(reactions), "reacted": reacted}
+
+
 @api_router.get("/files/{file_id}/preview")
 async def preview_file(file_id: str, current_user: Optional[User] = Depends(get_optional_user)):
     """Preview a file in browser (for images, PDFs, videos, text)"""
@@ -1326,14 +1842,16 @@ async def preview_file(file_id: str, current_user: Optional[User] = Depends(get_
 
 @app.websocket("/api/ws/{user_id}")
 async def websocket_endpoint(
-    websocket: WebSocket, 
+    websocket: WebSocket,
     user_id: str,
     username: str = Query(None),
     emoji: str = Query(None)
 ):
     """WebSocket endpoint for WebRTC signaling"""
     await manager.connect(user_id, websocket, username, emoji)
-    
+    # User came back online — cancel any pending guest message cleanup.
+    cancel_guest_msg_cleanup(user_id)
+
     try:
         while True:
             data = await websocket.receive_json()
@@ -1391,10 +1909,22 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         manager.disconnect(user_id)
         await manager.broadcast_online_users()
+        await _maybe_schedule_guest_cleanup_on_disconnect(user_id)
     except Exception as e:
         logger.error(f"WebSocket error for user {user_id}: {e}")
         manager.disconnect(user_id)
         await manager.broadcast_online_users()
+        await _maybe_schedule_guest_cleanup_on_disconnect(user_id)
+
+
+async def _maybe_schedule_guest_cleanup_on_disconnect(user_id: str):
+    """If the disconnecting user is a guest, schedule a 5-min message cleanup."""
+    try:
+        u = await db.users.find_one({"id": user_id}, {"_id": 0, "is_guest": 1})
+        if u and u.get("is_guest"):
+            schedule_guest_msg_cleanup(user_id)
+    except Exception as e:
+        logger.error(f"Failed to evaluate guest cleanup for {user_id}: {e}")
 
 @api_router.get("/online-users")
 async def get_online_users():

@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { Mail, Lock, User, Upload as UploadIcon, ArrowRight } from 'lucide-react';
+import { Mail, Lock, User, Upload as UploadIcon, ArrowRight, ArrowLeft } from 'lucide-react';
 import axios from 'axios';
+import AmbientBackground from './AmbientBackground';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
 
-const LoginPage = ({ onSuccess, onGuestMode }) => {
+const LoginPage = ({ onSuccess, onGuestMode, onBack }) => {
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -54,13 +55,18 @@ const LoginPage = ({ onSuccess, onGuestMode }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Animated background elements */}
-      <div className="absolute inset-0 overflow-hidden opacity-20">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-400 dark:bg-blue-600 rounded-full mix-blend-multiply dark:mix-blend-soft-light filter blur-3xl animate-blob"></div>
-        <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-slate-400 dark:bg-slate-600 rounded-full mix-blend-multiply dark:mix-blend-soft-light filter blur-3xl animate-blob animation-delay-2000"></div>
-        <div className="absolute bottom-1/4 left-1/3 w-96 h-96 bg-indigo-400 dark:bg-indigo-600 rounded-full mix-blend-multiply dark:mix-blend-soft-light filter blur-3xl animate-blob animation-delay-4000"></div>
-      </div>
+    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+      <AmbientBackground />
+
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="absolute top-4 left-4 z-20 inline-flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-200 bg-white/80 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 shadow-sm"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>Back to welcome</span>
+        </button>
+      )}
 
       <div className="w-full max-w-6xl mx-auto grid md:grid-cols-2 gap-8 items-center relative z-10">
         {/* Left side - Branding */}

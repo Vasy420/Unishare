@@ -28,7 +28,6 @@ export const isOfflineMode = () => {
 };
 
 export const getWebRtcIceServers = () => {
-  if (isOfflineMode()) return [];
   const rawServers = process.env.REACT_APP_WEBRTC_ICE_SERVERS || '';
   const customServers = rawServers
     .split(',')
@@ -38,6 +37,8 @@ export const getWebRtcIceServers = () => {
 
   if (customServers.length > 0) return customServers;
 
+  // Public STUN servers — provide srflx candidates so peers behind NAT can find each other.
+  // Same-browser tabs use BroadcastChannel instead (no internet needed).
   return [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' }

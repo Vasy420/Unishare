@@ -10,10 +10,20 @@ export const useTheme = () => {
   return context;
 };
 
+// Bump this when the project changes its preferred default so stale 'light'
+// localStorage choices get reset once. Manual toggle after that is preserved.
+const THEME_DEFAULT_VERSION = '2';
+
 export const ThemeProvider = ({ children }) => {
   const [theme, setTheme] = useState(() => {
+    const savedVersion = localStorage.getItem('theme_default_version');
+    if (savedVersion !== THEME_DEFAULT_VERSION) {
+      localStorage.setItem('theme_default_version', THEME_DEFAULT_VERSION);
+      localStorage.setItem('theme', 'dark');
+      return 'dark';
+    }
     const saved = localStorage.getItem('theme');
-    return saved || 'light';
+    return saved || 'dark';
   });
 
   useEffect(() => {

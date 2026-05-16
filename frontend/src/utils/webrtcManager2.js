@@ -14,9 +14,11 @@ class WebRTCManager {
     this.onFileReceived = null;
     this.onFileOffered = null;
     this.onProgressUpdate = null;
+    this.onChatEvent = null;
     this.pendingFiles = new Map(); // Files hosted for link-based pickup
     this.pendingSends = new Map(); // Files awaiting offer accept/decline
     this.receivingFiles = new Map(); // Files being received
+    this.pendingIceCandidates = new Map(); // ICE candidates queued before remoteDescription is set
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
     this.broadcastChannel = null;
@@ -224,52 +226,9 @@ class WebRTCManager {
       const message = JSON.parse(data);
 
       if (message.type === 'request-file') {
-        // Peer is requesting a file we're hosting
         const file = this.pendingFiles.get(message.fileId);
         if (file) {
-          console.log(`Peer ${peerId} requested file ${file.name}. Starting transfer...`);
           this.sendFileWithId(peerId, file, message.fileId, this.onProgressUpdate);
-        } else {
-          console.error(`Requested file ${message.fileId} not found`);
-        }
-      } else if (message.type === 'file-offer') {
-        // Sender is offering a file — present accept/decline UI to user
-        if (this.onFileOffered) {
-          this.onFileOffered({
-            peerId,
-            fileId: message.fileId,
-            name: message.name,
-            size: message.size,
-            mimeType: message.mimeType,
-            sender: message.sender || { username: 'Peer', emoji: '👤' }
-          });
-        } else {
-          console.warn('No onFileOffered handler set; auto-declining');
-          this.respondToOffer(peerId, message.fileId, false);
-        }
-      } else if (message.type === 'file-offer-response') {
-        // Receiver accepted or declined our offer
-        const pending = this.pendingSends.get(message.fileId);
-        if (pending) {
-          this.pendingSends.delete(message.fileId);
-          if (message.accepted) {
-            if (pending.onProgress) {
-              pending.onProgress({ type: 'accepted', fileName: pending.file.name });
-            }
-            this.sendFileWithId(
-              pending.peerId,
-              pending.file,
-              message.fileId,
-              pending.onProgress,
-              () => pending.resolve && pending.resolve()
-            );
-          } else {
-            console.log(`Peer ${peerId} declined file: ${pending.file.name}`);
-            if (pending.onProgress) {
-              pending.onProgress({ type: 'declined', fileName: pending.file.name });
-            }
-            pending.reject && pending.reject(new Error('Peer declined the file'));
-          }
         }
       } else if (message.type === 'file-metadata') {
         // Initialize file reception
@@ -350,7 +309,23 @@ class WebRTCManager {
     }
   }
 
+  canSendViaBroadcast(peerId) {
+    const can = !!(this.broadcastChannel && this.broadcastPeers.has(peerId));
+    console.log('[BC] canSendViaBroadcast', {
+      peerId,
+      hasChannel: !!this.broadcastChannel,
+      broadcastPeers: Array.from(this.broadcastPeers.keys()),
+      result: can
+    });
+    return can;
+  }
+
   async sendFile(peerId, file, onProgress) {
+    // Same-browser tabs: use BroadcastChannel (no NAT/ICE/mDNS issues)
+    if (this.canSendViaBroadcast(peerId)) {
+      return this.sendFileViaBroadcast(peerId, file, onProgress);
+    }
+
     const dataChannel = this.dataChannels.get(peerId);
     if (!dataChannel || dataChannel.readyState !== 'open') {
       throw new Error('Data channel not ready');
@@ -359,41 +334,93 @@ class WebRTCManager {
     const fileId = Math.random().toString(36).substr(2, 9);
 
     return new Promise((resolve, reject) => {
-      const timeoutMs = 120000;
-      const timeoutId = setTimeout(() => {
-        if (this.pendingSends.has(fileId)) {
-          this.pendingSends.delete(fileId);
-          reject(new Error('Peer did not respond to file offer'));
-        }
-      }, timeoutMs);
-
-      this.pendingSends.set(fileId, {
-        file,
-        peerId,
-        onProgress,
-        resolve: () => { clearTimeout(timeoutId); resolve(); },
-        reject: (err) => { clearTimeout(timeoutId); reject(err); }
-      });
-
       try {
-        dataChannel.send(JSON.stringify({
-          type: 'file-offer',
-          fileId,
-          name: file.name,
-          size: file.size,
-          mimeType: file.type,
-          sender: {
-            userId: this.userId,
-            username: this.username,
-            emoji: this.emoji
-          }
-        }));
-      } catch (e) {
-        clearTimeout(timeoutId);
-        this.pendingSends.delete(fileId);
-        reject(e);
+        this.sendFileWithId(peerId, file, fileId, onProgress, resolve);
+      } catch (err) {
+        reject(err);
       }
     });
+  }
+
+  async sendFileViaBroadcast(peerId, file, onProgress) {
+    if (!this.broadcastChannel) throw new Error('Broadcast channel unavailable');
+
+    const fileId = Math.random().toString(36).substr(2, 9);
+    // Bigger chunks for big files: fewer postMessage calls, less per-chunk overhead.
+    // File.slice() streams from disk — sender never holds the whole file in RAM.
+    const CHUNK_SIZE = file.size > 100 * 1024 * 1024
+      ? 4 * 1024 * 1024   // 4MB for files > 100MB
+      : 256 * 1024;        // 256KB otherwise
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE) || 1;
+
+    this.broadcastChannel.postMessage({
+      type: 'bc-file-metadata',
+      target: peerId,
+      sender: this.userId,
+      fileId,
+      name: file.name,
+      size: file.size,
+      mimeType: file.type,
+      totalChunks,
+      senderInfo: {
+        userId: this.userId,
+        username: this.username,
+        emoji: this.emoji
+      }
+    });
+
+    let offset = 0;
+    let chunkIndex = 0;
+    const startTime = Date.now();
+
+    while (offset < file.size) {
+      const slice = file.slice(offset, offset + CHUNK_SIZE);
+      const buffer = await slice.arrayBuffer();
+
+      this.broadcastChannel.postMessage({
+        type: 'bc-file-chunk',
+        target: peerId,
+        sender: this.userId,
+        fileId,
+        index: chunkIndex,
+        data: buffer,
+        totalChunks
+      });
+
+      offset += buffer.byteLength;
+      chunkIndex++;
+
+      const progress = (offset / file.size) * 100;
+      const elapsed = (Date.now() - startTime) / 1000 || 0.001;
+      const speed = offset / elapsed;
+      const remaining = speed > 0 ? (file.size - offset) / speed : 0;
+
+      if (onProgress) {
+        onProgress({
+          progress: Math.round(progress),
+          speed,
+          timeRemaining: remaining
+        });
+      }
+
+      // Yield to event loop so UI updates and BC messages flush
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+
+    if (file.size === 0) {
+      // Empty file: at least send a zero-byte final chunk so receiver finalizes
+      this.broadcastChannel.postMessage({
+        type: 'bc-file-chunk',
+        target: peerId,
+        sender: this.userId,
+        fileId,
+        index: 0,
+        data: new ArrayBuffer(0),
+        totalChunks: 1
+      });
+    }
+
+    console.log('File sent via BroadcastChannel');
   }
 
   async sendFileWithId(peerId, file, fileId, onProgress, onComplete) {
@@ -480,6 +507,9 @@ class WebRTCManager {
 
   async initiateConnection(peerId) {
     try {
+      // Clean up any existing connection for this peer
+      this.closePeerConnection(peerId);
+
       const peerConnection = await this.createPeerConnection(peerId, true);
 
       const offer = await peerConnection.createOffer();
@@ -505,6 +535,13 @@ class WebRTCManager {
 
       await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
 
+      // Drain any ICE candidates that arrived before remote description was set
+      const pending = this.pendingIceCandidates.get(peerId) || [];
+      for (const candidate of pending) {
+        try { await peerConnection.addIceCandidate(new RTCIceCandidate(candidate)); } catch (_) {}
+      }
+      this.pendingIceCandidates.delete(peerId);
+
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
 
@@ -526,6 +563,13 @@ class WebRTCManager {
       const peerConnection = this.peers.get(peerId);
       if (peerConnection) {
         await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+
+        // Drain any ICE candidates that arrived before the answer
+        const pending = this.pendingIceCandidates.get(peerId) || [];
+        for (const candidate of pending) {
+          try { await peerConnection.addIceCandidate(new RTCIceCandidate(candidate)); } catch (_) {}
+        }
+        this.pendingIceCandidates.delete(peerId);
       }
     } catch (error) {
       console.error('Error handling answer:', error);
@@ -533,11 +577,19 @@ class WebRTCManager {
   }
 
   async handleIceCandidate(peerId, candidate) {
-    try {
-      const peerConnection = this.peers.get(peerId);
-      if (peerConnection) {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+    const peerConnection = this.peers.get(peerId);
+    if (!peerConnection) return;
+
+    if (!peerConnection.remoteDescription) {
+      if (!this.pendingIceCandidates.has(peerId)) {
+        this.pendingIceCandidates.set(peerId, []);
       }
+      this.pendingIceCandidates.get(peerId).push(candidate);
+      return;
+    }
+
+    try {
+      await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
     } catch (error) {
       console.error('Error handling ICE candidate:', error);
     }
@@ -555,6 +607,8 @@ class WebRTCManager {
       dataChannel.close();
       this.dataChannels.delete(peerId);
     }
+
+    this.pendingIceCandidates.delete(peerId);
   }
 
   disconnect() {
@@ -594,7 +648,7 @@ class WebRTCManager {
       return true;
     }
 
-    console.log('Using BroadcastChannel signaling');
+    console.log('[BC] Enabling BroadcastChannel signaling. userId=', this.userId);
     this.broadcastChannel = new BroadcastChannel('unishare-signal');
     this.broadcastChannel.onmessage = (event) => {
       this.handleBroadcastMessage(event.data);
@@ -653,6 +707,26 @@ class WebRTCManager {
     }
   }
 
+  _finalizeStreamedFile(fileId, fileInfo) {
+    const writable = fileInfo.writable;
+    if (!writable) return;
+    fileInfo.writeQueue = fileInfo.writeQueue
+      .then(() => writable.close())
+      .then(() => {
+        console.log('[BC] Streamed file saved to disk:', fileInfo.name);
+        if (this.onFileReceived) {
+          this.onFileReceived(fileInfo.name, null, fileInfo.senderPeerId, {
+            sender: fileInfo.sender,
+            size: fileInfo.size,
+            mimeType: fileInfo.type,
+            savedToDisk: true
+          });
+        }
+        this.receivingFiles.delete(fileId);
+      })
+      .catch((err) => { console.error('[BC] Close failed:', err); });
+  }
+
   handleBroadcastMessage(message) {
     if (!message || typeof message !== 'object') return;
 
@@ -664,21 +738,22 @@ class WebRTCManager {
     }
 
     if (message.type === 'presence' || message.type === 'presence-leave') {
-      if (this.wsConnected) return;
       if (message.sender === this.userId) return;
       if (message.type === 'presence-leave') {
+        console.log('[BC] presence-leave from', message.sender);
         this.broadcastPeers.delete(message.sender);
-        this.updateOnlineUsersFromBroadcast();
+        if (!this.wsConnected) this.updateOnlineUsersFromBroadcast();
         return;
       }
 
+      console.log('[BC] presence from', message.sender, message.username);
       this.broadcastPeers.set(message.sender, {
         id: message.sender,
         username: message.username || 'Anonymous',
         emoji: message.emoji || '👤',
         lastSeen: message.timestamp || Date.now()
       });
-      this.updateOnlineUsersFromBroadcast();
+      if (!this.wsConnected) this.updateOnlineUsersFromBroadcast();
       return;
     }
 
@@ -687,6 +762,141 @@ class WebRTCManager {
     }
 
     if (message.target && message.target !== this.userId) {
+      return;
+    }
+
+    if (message.type === 'bc-file-metadata') {
+      // Stream-to-disk for files > 500MB via File System Access API.
+      // Avoids loading multi-GB files into memory on the receiver.
+      const STREAM_THRESHOLD = 500 * 1024 * 1024;
+      const canStream = typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function';
+      const useStreaming = message.size > STREAM_THRESHOLD && canStream;
+
+      const fileInfo = {
+        name: message.name,
+        size: message.size,
+        type: message.mimeType,
+        chunks: [],
+        receivedSize: 0,
+        totalChunks: message.totalChunks,
+        sender: message.senderInfo || null,
+        senderPeerId: message.sender,
+        // Streaming state
+        streaming: useStreaming,
+        writable: null,
+        pendingChunks: useStreaming ? [] : null,
+        writeQueue: Promise.resolve(), // sequential write pipeline
+        lastChunkReceived: false
+      };
+      this.receivingFiles.set(message.fileId, fileInfo);
+
+      if (useStreaming) {
+        (async () => {
+          let writable;
+          try {
+            const handle = await window.showSaveFilePicker({ suggestedName: message.name });
+            writable = await handle.createWritable();
+          } catch (err) {
+            console.warn('[BC] Save picker cancelled or failed; falling back to memory mode:', err);
+            fileInfo.streaming = false;
+            if (fileInfo.pendingChunks) {
+              for (let i = 0; i < fileInfo.pendingChunks.length; i++) {
+                if (fileInfo.pendingChunks[i]) fileInfo.chunks[i] = fileInfo.pendingChunks[i];
+              }
+              fileInfo.pendingChunks = null;
+            }
+            return;
+          }
+
+          // Atomically: snapshot pending, enqueue drain, expose writable.
+          // No awaits between these statements — chunk handler can't observe a half-set state.
+          const pending = fileInfo.pendingChunks || [];
+          fileInfo.pendingChunks = null;
+          fileInfo.writeQueue = fileInfo.writeQueue.then(async () => {
+            for (let i = 0; i < pending.length; i++) {
+              if (pending[i]) await writable.write(pending[i]);
+            }
+          });
+          fileInfo.writable = writable;
+
+          // If the last chunk arrived while picker was open, close after drain.
+          if (fileInfo.lastChunkReceived) {
+            this._finalizeStreamedFile(message.fileId, fileInfo);
+          }
+        })();
+      }
+
+      if (this.onProgressUpdate) {
+        this.onProgressUpdate({
+          type: 'receiving',
+          peerId: message.sender,
+          fileName: message.name,
+          sender: message.senderInfo || null,
+          progress: 0,
+          speed: 0,
+          timeRemaining: 0
+        });
+      }
+      return;
+    }
+
+    if (message.type === 'bc-file-chunk') {
+      const fileInfo = this.receivingFiles.get(message.fileId);
+      if (!fileInfo) return;
+
+      const bytes = new Uint8Array(message.data);
+
+      if (fileInfo.streaming) {
+        if (fileInfo.writable) {
+          const w = fileInfo.writable;
+          fileInfo.writeQueue = fileInfo.writeQueue
+            .then(() => w.write(bytes))
+            .catch((err) => { console.error('[BC] Disk write failed:', err); });
+        } else if (fileInfo.pendingChunks) {
+          fileInfo.pendingChunks[message.index] = bytes;
+        } else {
+          fileInfo.chunks[message.index] = bytes;
+        }
+      } else {
+        fileInfo.chunks[message.index] = bytes;
+      }
+
+      fileInfo.receivedSize += bytes.length;
+
+      const progress = fileInfo.size > 0 ? (fileInfo.receivedSize / fileInfo.size) * 100 : 100;
+      if (this.onProgressUpdate) {
+        this.onProgressUpdate({
+          type: 'receiving',
+          peerId: message.sender,
+          fileName: fileInfo.name,
+          progress: Math.round(progress),
+          speed: 0,
+          timeRemaining: 0
+        });
+      }
+
+      if (message.index === message.totalChunks - 1) {
+        fileInfo.lastChunkReceived = true;
+
+        if (fileInfo.streaming) {
+          // If writable is ready, finalize now (queued behind drain + writes).
+          // If not, the picker handler will finalize when it resolves.
+          if (fileInfo.writable) {
+            this._finalizeStreamedFile(message.fileId, fileInfo);
+          }
+        } else {
+          const blob = new Blob(fileInfo.chunks, { type: fileInfo.type });
+          console.log('File received via BroadcastChannel:', fileInfo.name, 'Size:', blob.size);
+          if (this.onFileReceived) {
+            this.onFileReceived(fileInfo.name, blob, message.sender, {
+              sender: fileInfo.sender,
+              size: fileInfo.size,
+              mimeType: fileInfo.type
+            });
+          }
+          this.receivingFiles.delete(message.fileId);
+        }
+      }
       return;
     }
 
@@ -713,6 +923,22 @@ class WebRTCManager {
 
       case 'ice-candidate':
         this.handleIceCandidate(data.sender, data.candidate);
+        break;
+
+      case 'chat_new':
+      case 'chat_edit':
+      case 'chat_delete':
+      case 'chat_react':
+      case 'chat_pin':
+      case 'chat_mute':
+      case 'chat_clear':
+        if (this.onChatEvent) {
+          try {
+            this.onChatEvent(data);
+          } catch (e) {
+            console.error('onChatEvent handler failed:', e);
+          }
+        }
         break;
 
       default:

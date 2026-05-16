@@ -1,5 +1,9 @@
-import React from 'react';
-import { Download, Trash2, Share2, File, HardDrive, CloudUpload, Eye } from 'lucide-react';
+import React, { useState } from 'react';
+import axios from 'axios';
+import { Download, Trash2, Share2, File, HardDrive, CloudUpload, Eye, Heart } from 'lucide-react';
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
+const API = `${BACKEND_URL}/api`;
 
 const formatFileSize = (bytes) => {
   if (bytes === 0) return '0 Bytes';
@@ -20,48 +24,35 @@ const formatDate = (dateString) => {
   });
 };
 
-const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, onPreview, user }) => {
-  console.log('[FileCard] Rendered with props:', {
-    fileName: file?.original_filename,
-    hasOnShare: !!onShare,
-    hasOnDownload: !!onDownload,
-    hasOnDelete: !!onDelete,
-    hasOnPreview: !!onPreview
-  });
+const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, onPreview, user, token }) => {
+  const isOwner = user && file.owner_id === user.id;
+  const [reacted, setReacted] = useState(!!file.reacted);
+  const [reactionCount, setReactionCount] = useState(file.reaction_count || 0);
+  const [reactBusy, setReactBusy] = useState(false);
 
-  const handleShareClick = () => {
-    console.log('[FileCard] Share button clicked for file:', file?.original_filename);
-    if (onShare) {
-      onShare(file);
-    } else {
-      console.error('[FileCard] onShare is not defined!');
-    }
-  };
+  const handleShareClick = () => onShare && onShare(file);
+  const handleDownloadClick = () => onDownload && onDownload(file);
+  const handleDeleteClick = () => onDelete && onDelete(file);
+  const handlePreviewClick = () => onPreview && onPreview(file);
 
-  const handleDownloadClick = () => {
-    console.log('[FileCard] Download button clicked for file:', file?.original_filename);
-    if (onDownload) {
-      onDownload(file);
-    } else {
-      console.error('[FileCard] onDownload is not defined!');
-    }
-  };
-
-  const handleDeleteClick = () => {
-    console.log('[FileCard] Delete button clicked for file:', file?.original_filename);
-    if (onDelete) {
-      onDelete(file);
-    } else {
-      console.error('[FileCard] onDelete is not defined!');
-    }
-  };
-
-  const handlePreviewClick = () => {
-    console.log('[FileCard] Preview button clicked for file:', file?.original_filename);
-    if (onPreview) {
-      onPreview(file);
-    } else {
-      console.error('[FileCard] onPreview is not defined!');
+  const handleReactClick = async () => {
+    if (!token) return;
+    setReactBusy(true);
+    const prevReacted = reacted;
+    const prevCount = reactionCount;
+    setReacted(!prevReacted);
+    setReactionCount(prevCount + (prevReacted ? -1 : 1));
+    try {
+      const r = await axios.post(`${API}/files/${file.id}/react`, null, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setReacted(!!r.data.reacted);
+      setReactionCount(r.data.reaction_count || 0);
+    } catch {
+      setReacted(prevReacted);
+      setReactionCount(prevCount);
+    } finally {
+      setReactBusy(false);
     }
   };
 
@@ -92,7 +83,7 @@ const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, onPrevie
                     guest
                   </span>
                 )}
-                {user && file.owner_id === user.id && (
+                {isOwner && (
                   <span className="ml-1 text-[10px] text-blue-500">you</span>
                 )}
               </p>
@@ -116,7 +107,6 @@ const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, onPrevie
           <span>Share</span>
         </button>
 
-        {/* Save to Drive button - show only if user has Drive connected and file is not already on Drive */}
         {user && user.google_drive_connected && file.source !== 'google_drive' && onSaveToDrive && (
           <button
             onClick={() => onSaveToDrive(file)}
@@ -142,13 +132,30 @@ const FileCard = ({ file, onDownload, onDelete, onShare, onSaveToDrive, onPrevie
         >
           <Download className="w-4 h-4" />
         </button>
-        <button
-          onClick={handleDeleteClick}
-          className="bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 p-2 rounded-lg transition-colors duration-200"
-          title="Delete"
-        >
-          <Trash2 className="w-4 h-4" />
-        </button>
+
+        {isOwner ? (
+          <button
+            onClick={handleDeleteClick}
+            className="bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 p-2 rounded-lg transition-colors duration-200"
+            title="Delete"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        ) : (
+          <button
+            onClick={handleReactClick}
+            disabled={reactBusy}
+            className={`p-2 rounded-lg transition-colors duration-200 flex items-center space-x-1 disabled:opacity-50 ${
+              reacted
+                ? 'bg-pink-100 dark:bg-pink-900/40 text-pink-600 dark:text-pink-300'
+                : 'bg-pink-50 hover:bg-pink-100 dark:bg-pink-900/20 dark:hover:bg-pink-900/40 text-pink-500 dark:text-pink-300'
+            }`}
+            title={reacted ? 'Remove reaction' : 'Like'}
+          >
+            <Heart className={`w-4 h-4 ${reacted ? 'fill-current' : ''}`} />
+            {reactionCount > 0 && <span className="text-xs font-medium">{reactionCount}</span>}
+          </button>
+        )}
       </div>
     </div>
   );

@@ -3,9 +3,11 @@ import { X, Copy, Users, HardDrive, Check, Loader, QrCode, Download } from 'luci
 import { QRCodeSVG } from 'qrcode.react';
 import webrtcManager from '../utils/webrtcManager2';
 import { isOfflineMode } from '../utils/offline';
+import { useAuth } from '../contexts/AuthContext';
 
 const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
-  const [activeTab, setActiveTab] = useState('link');
+  const { token } = useAuth();
+  const [activeTab, setActiveTab] = useState('p2p');
   const [copied, setCopied] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [selectedPeer, setSelectedPeer] = useState(null);
@@ -16,13 +18,11 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
 
   useEffect(() => {
     if (isOpen) {
-      // Get online users
+      const filterAdmins = (users) => (users || []).filter((u) => !u.is_admin);
       webrtcManager.onOnlineUsersChange = (users) => {
-        setOnlineUsers(users);
+        setOnlineUsers(filterAdmins(users));
       };
-      
-      // Get current online users
-      setOnlineUsers(webrtcManager.onlineUsers || []);
+      setOnlineUsers(filterAdmins(webrtcManager.onlineUsers));
     }
   }, [isOpen]);
 
@@ -63,7 +63,8 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
       }
 
       const downloadUrl = `${backendUrl}${file.download_url}`;
-      const response = await fetch(downloadUrl);
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const response = await fetch(downloadUrl, { headers });
 
       if (!response.ok) {
         throw new Error(`Failed to fetch file: ${response.statusText}`);
@@ -72,10 +73,15 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
       const blob = await response.blob();
       const fileToShare = new File([blob], file.original_filename, { type: file.content_type });
 
-      const dc = webrtcManager.dataChannels.get(peerId);
-      if (!dc || dc.readyState !== 'open') {
-        if (!dc) await webrtcManager.initiateConnection(peerId);
-        await webrtcManager.waitForDataChannelOpen(peerId, 10000);
+      // Same-browser tabs: BroadcastChannel transfer (skip WebRTC entirely).
+      // Cross-machine: open WebRTC data channel first.
+      if (!webrtcManager.canSendViaBroadcast(peerId)) {
+        const dc = webrtcManager.dataChannels.get(peerId);
+        if (!dc || dc.readyState !== 'open') {
+          if (dc) webrtcManager.closePeerConnection(peerId);
+          await webrtcManager.initiateConnection(peerId);
+          await webrtcManager.waitForDataChannelOpen(peerId, 15000);
+        }
       }
 
       await webrtcManager.sendFile(peerId, fileToShare, (update) => {
@@ -93,10 +99,8 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
     } catch (error) {
       console.error('P2P share failed:', error);
       const msg = (error.message || '').toLowerCase();
-      if (msg.includes('declined')) {
-        setShareStatus({ kind: 'error', message: 'Recipient declined the file.' });
-      } else if (msg.includes('did not respond')) {
-        setShareStatus({ kind: 'error', message: 'Recipient did not respond.' });
+      if (msg.includes('timeout')) {
+        setShareStatus({ kind: 'error', message: 'Could not connect to peer. Make sure both users are online.' });
       } else {
         setShareStatus({ kind: 'error', message: 'Send failed: ' + error.message });
       }
@@ -138,6 +142,19 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
         {/* Tabs */}
         <div className="flex border-b border-gray-200 dark:border-gray-700 px-6">
           <button
+            onClick={() => setActiveTab('p2p')}
+            className={`px-4 py-3 font-medium text-sm transition-colors border-b-2 ${
+              activeTab === 'p2p'
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+            }`}
+          >
+            <span className="flex items-center space-x-2">
+              <Users className="w-4 h-4" />
+              <span>Local Users</span>
+            </span>
+          </button>
+          <button
             onClick={() => setActiveTab('link')}
             className={`px-4 py-3 font-medium text-sm transition-colors border-b-2 ${
               activeTab === 'link'
@@ -158,19 +175,6 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
             <span className="flex items-center space-x-2">
               <QrCode className="w-4 h-4" />
               <span>QR Code</span>
-            </span>
-          </button>
-          <button
-            onClick={() => setActiveTab('p2p')}
-            className={`px-4 py-3 font-medium text-sm transition-colors border-b-2 ${
-              activeTab === 'p2p'
-                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-            }`}
-          >
-            <span className="flex items-center space-x-2">
-              <Users className="w-4 h-4" />
-              <span>P2P Share</span>
             </span>
           </button>
         </div>
@@ -270,13 +274,13 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
               )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-                  Online Users ({onlineUsers.length})
+                  Local Users ({onlineUsers.length})
                 </label>
-                
+
                 {onlineUsers.length === 0 ? (
                   <div className="text-center py-8">
                     <Users className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-                    <p className="text-gray-600 dark:text-gray-400">No users online</p>
+                    <p className="text-gray-600 dark:text-gray-400">No local users</p>
                     <p className="text-sm text-gray-500 dark:text-gray-500 mt-1">
                       Wait for other users to connect
                     </p>

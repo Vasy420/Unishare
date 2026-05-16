@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
-import { Moon, Sun, LogOut, Upload as UploadIcon, HardDrive, History, LogIn, FileText, Menu, X } from 'lucide-react';
+import { Moon, Sun, LogOut, Upload as UploadIcon, HardDrive, History, LogIn, FileText, Menu, X, MessageCircle } from 'lucide-react';
 import { useTheme } from './contexts/ThemeContext';
 import { useAuth } from './contexts/AuthContext';
 import { setAuthToken } from './utils/authStorage';
@@ -22,7 +22,9 @@ import UploadOptionsModal from './components/UploadOptionsModal'; // Changed fro
 import ReceiveFileView from './components/ReceiveFileView';
 import AdminView from './components/AdminView';
 import ConfirmModal from './components/ConfirmModal';
-import P2PReceivePromptModal from './components/P2PReceivePromptModal';
+import ChatView from './components/ChatView';
+import AvatarPickerModal from './components/AvatarPickerModal';
+import AmbientBackground from './components/AmbientBackground';
 import P2PReceivedPreviewModal from './components/P2PReceivedPreviewModal';
 import webrtcManager from './utils/webrtcManager2';
 import { isOfflineMode } from './utils/offline';
@@ -33,6 +35,8 @@ const API = `${BACKEND_URL}/api`;
 
 // Guest data limit (2GB in bytes)
 const GUEST_DATA_LIMIT = 2 * 1024 * 1024 * 1024;
+const CLOUD_UPLOAD_MAX_BYTES = 100 * 1024 * 1024; // 100MB cap for cloud uploads
+const CLOUD_UPLOAD_MAX_LABEL = '100 MB';
 
 function App() {
   const { theme, toggleTheme } = useTheme();
@@ -42,6 +46,7 @@ function App() {
 
   const [files, setFiles] = useState([]);
   const [showGuestModal, setShowGuestModal] = useState(false);
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showLoginPage, setShowLoginPage] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
@@ -58,7 +63,6 @@ function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
-  const [incomingOffer, setIncomingOffer] = useState(null);
   const [receivedFile, setReceivedFile] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -69,13 +73,22 @@ function App() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Check if it's first visit
   useEffect(() => {
-    const hasVisited = localStorage.getItem('unishare_has_visited');
-    if (!hasVisited) {
+    const onToast = (e) => {
+      const { message, kind } = (e && e.detail) || {};
+      if (message) showToast(message, kind || 'info');
+    };
+    window.addEventListener('app-toast', onToast);
+    return () => window.removeEventListener('app-toast', onToast);
+  }, []);
+
+  // Show welcome on every load when no user is signed in.
+  // User explicitly clicks "Enter UniShare" to dismiss it for this session.
+  useEffect(() => {
+    if (!authLoading && !user) {
       setShowWelcome(true);
     }
-  }, []);
+  }, [authLoading, user]);
 
   // Wipe guest data on tab close / page hide via sendBeacon.
   // Beacons cannot set Authorization headers, so the token goes in the URL.
@@ -141,14 +154,14 @@ function App() {
           headers: { Authorization: `Bearer ${token}` }
         }).then(response => {
           setUser(response.data);
-          alert('Google Drive connected successfully!');
+          showToast('Google Drive connected successfully', 'success');
         }).catch(error => {
           console.error('Failed to refresh user info:', error);
         });
       }
       window.history.replaceState({}, document.title, window.location.pathname);
     } else if (driveError === 'true') {
-      alert('Failed to connect Google Drive. Please try again.');
+      showToast('Failed to connect Google Drive. Please try again.', 'error');
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, [setToken, setUser, token]);
@@ -171,18 +184,25 @@ function App() {
       webrtcManager.updateUserInfo(user.username, user.emoji);
 
       webrtcManager.onFileReceived = (filename, blob, peerId, metadata = {}) => {
+        if (metadata.savedToDisk) {
+          // Large file streamed straight to user's chosen save location — no Blob, no preview.
+          window.dispatchEvent(new CustomEvent('app-toast', {
+            detail: {
+              message: `Received "${filename}" — saved to disk`,
+              kind: 'success'
+            }
+          }));
+          setDownloadProgress(null);
+          return;
+        }
         setReceivedFile({
           fileName: filename,
           blob,
           peerId,
           sender: metadata.sender,
-          mimeType: metadata.mimeType || blob.type
+          mimeType: metadata.mimeType || (blob && blob.type) || ''
         });
         setDownloadProgress(null);
-      };
-
-      webrtcManager.onFileOffered = (offer) => {
-        setIncomingOffer(offer);
       };
 
       webrtcManager.onProgressUpdate = (update) => {
@@ -271,6 +291,16 @@ function App() {
         console.error('Import failed:', error);
         alert(error.response?.data?.detail || 'Failed to import file to UniShare');
       }
+      return;
+    }
+
+    if (file.size > CLOUD_UPLOAD_MAX_BYTES) {
+      window.dispatchEvent(new CustomEvent('app-toast', {
+        detail: {
+          message: `"${file.name}" is too large to upload (limit ${CLOUD_UPLOAD_MAX_LABEL}). Send it directly to a peer instead.`,
+          kind: 'error'
+        }
+      }));
       return;
     }
 
@@ -424,7 +454,7 @@ function App() {
 
   const handleConnectDrive = async () => {
     if (isOfflineMode()) {
-      alert('Google Drive requires internet access. Offline mode is enabled.');
+      showToast('Google Drive requires internet. Offline mode is enabled.', 'info');
       setDriveConfigured(false);
       return;
     }
@@ -439,16 +469,21 @@ function App() {
       const errorMsg = error.response?.data?.detail || 'Failed to connect Google Drive';
       if (errorMsg.includes('not configured')) {
         setDriveConfigured(false);
-        alert('Google Drive integration is not configured on this server.');
+        showToast('Google Drive is not configured on the server.', 'error');
       } else {
-        alert(errorMsg);
+        showToast(errorMsg, 'error');
       }
     }
   };
 
   const handleWelcomeGetStarted = () => {
-    localStorage.setItem('unishare_has_visited', 'true');
     setShowWelcome(false);
+    setShowLoginPage(true);
+  };
+
+  const handleBackToWelcome = () => {
+    setShowLoginPage(false);
+    setShowWelcome(true);
   };
 
   const handleDriveConnectNow = async () => {
@@ -519,18 +554,14 @@ function App() {
           setShowLoginPage(false);
           setShowGuestModal(true);
         }}
+        onBack={handleBackToWelcome}
       />
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900 relative overflow-hidden flex flex-col">
-      {/* Animated background */}
-      <div className="absolute inset-0 overflow-hidden opacity-20 pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-300 dark:bg-blue-800 rounded-full mix-blend-multiply dark:mix-blend-soft-light filter blur-xl animate-blob"></div>
-        <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-slate-300 dark:bg-slate-700 rounded-full mix-blend-multiply dark:mix-blend-soft-light filter blur-xl animate-blob animation-delay-2000"></div>
-        <div className="absolute bottom-1/4 left-1/3 w-96 h-96 bg-indigo-300 dark:bg-indigo-800 rounded-full mix-blend-multiply dark:mix-blend-soft-light filter blur-xl animate-blob animation-delay-4000"></div>
-      </div>
+    <div className="min-h-screen relative overflow-hidden flex flex-col">
+      <AmbientBackground density="sparse" />
 
       {/* Header */}
       <header className="bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 sticky top-0 z-40 backdrop-blur-sm bg-white/90 dark:bg-slate-800/90">
@@ -557,7 +588,19 @@ function App() {
               >
                 <div className="flex items-center space-x-2">
                   <FileText className="w-4 h-4" />
-                  <span>My Files</span>
+                  <span>Files</span>
+                </div>
+              </Link>
+              <Link
+                to="/chat"
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${location.pathname === '/chat'
+                  ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                  }`}
+              >
+                <div className="flex items-center space-x-2">
+                  <MessageCircle className="w-4 h-4" />
+                  <span>Chat</span>
                 </div>
               </Link>
               <Link
@@ -613,8 +656,17 @@ function App() {
                     </button>
                   )}
 
-                  <div className="hidden sm:flex items-center space-x-2 px-3 py-2 bg-gray-100 dark:bg-slate-700 rounded-lg">
-                    <span className="text-xl">{user.emoji}</span>
+                  <button
+                    onClick={() => !user.is_guest && setShowAvatarPicker(true)}
+                    disabled={user.is_guest}
+                    title={user.is_guest ? 'Sign in to set an avatar' : 'Change avatar'}
+                    className={`hidden sm:flex items-center space-x-2 px-3 py-2 bg-gray-100 dark:bg-slate-700 rounded-lg ${user.is_guest ? 'cursor-default' : 'hover:bg-gray-200 dark:hover:bg-slate-600 cursor-pointer'}`}
+                  >
+                    {user.avatar_url ? (
+                      <img src={user.avatar_url} alt="avatar" className="w-7 h-7 rounded-full bg-white" />
+                    ) : (
+                      <span className="text-xl">{user.emoji}</span>
+                    )}
                     <span className="text-sm font-medium text-gray-900 dark:text-white">
                       {user.username}
                     </span>
@@ -623,7 +675,7 @@ function App() {
                         Guest
                       </span>
                     )}
-                  </div>
+                  </button>
                 </>
               )}
 
@@ -663,7 +715,14 @@ function App() {
               onClick={() => setMobileMenuOpen(false)}
               className="block px-3 py-2 rounded-lg text-base font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-700"
             >
-              My Files
+              Files
+            </Link>
+            <Link
+              to="/chat"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block px-3 py-2 rounded-lg text-base font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-700"
+            >
+              Chat
             </Link>
             <Link
               to="/drive"
@@ -736,33 +795,14 @@ function App() {
                   )}
                 </div>
 
-                {/* Files Grid */}
-                <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                      {user.is_guest ? 'Your Shared Files' : 'My Files'}
-                    </h2>
-                    {user.is_guest && (
-                      <button
-                        onClick={() => setShowAuthModal(true)}
-                        className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
-                      >
-                        Login to access everywhere
-                      </button>
-                    )}
-                  </div>
+                {/* Files Grid — split into My Files vs Public Files */}
+                {(() => {
+                  const myFiles = files.filter((f) => f.owner_id === user.id);
+                  const publicFiles = files.filter((f) => f.owner_id !== user.id);
 
-                  {files.length === 0 ? (
-                    <div className="text-center py-12 bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 shadow-sm">
-                      <UploadIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                      <p className="text-gray-600 dark:text-gray-400">No files yet</p>
-                      <p className="text-sm text-gray-500 dark:text-gray-500 mt-1">
-                        Upload your first file to get started
-                      </p>
-                    </div>
-                  ) : (
+                  const renderGrid = (list) => (
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                      {files.map((file) => (
+                      {list.map((file) => (
                         <FileCard
                           key={file.id}
                           file={file}
@@ -770,16 +810,69 @@ function App() {
                           onDelete={handleDelete}
                           onShare={handleShare}
                           onSaveToDrive={handleSaveToDrive}
-                          onPreview={(file) => {
-                            setPreviewFile(file);
+                          onPreview={(f) => {
+                            setPreviewFile(f);
                             setShowPreviewModal(true);
                           }}
                           user={user}
+                          token={token}
                         />
                       ))}
                     </div>
-                  )}
-                </div>
+                  );
+
+                  return (
+                    <>
+                      <div className="mb-8">
+                        <div className="flex items-center justify-between mb-4">
+                          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                            My Files
+                            <span className="ml-2 text-xs font-normal text-gray-500 dark:text-gray-400">
+                              ({myFiles.length})
+                            </span>
+                          </h2>
+                          {user.is_guest && (
+                            <button
+                              onClick={() => setShowAuthModal(true)}
+                              className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                            >
+                              Login to access everywhere
+                            </button>
+                          )}
+                        </div>
+                        {myFiles.length === 0 ? (
+                          <div className="text-center py-10 bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 shadow-sm">
+                            <UploadIcon className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                            <p className="text-gray-600 dark:text-gray-400">You haven't uploaded any files yet</p>
+                          </div>
+                        ) : (
+                          renderGrid(myFiles)
+                        )}
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-4">
+                          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                            Public Files
+                            <span className="ml-2 text-xs font-normal text-gray-500 dark:text-gray-400">
+                              ({publicFiles.length})
+                            </span>
+                          </h2>
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            uploaded by other users
+                          </span>
+                        </div>
+                        {publicFiles.length === 0 ? (
+                          <div className="text-center py-10 bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 shadow-sm">
+                            <p className="text-sm text-gray-500 dark:text-gray-400">No public files shared yet</p>
+                          </div>
+                        ) : (
+                          renderGrid(publicFiles)
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
               </>
             } />
             <Route path="/drive" element={
@@ -794,6 +887,7 @@ function App() {
             } />
             <Route path="/history" element={<HistoryView token={token} />} />
             <Route path="/receive" element={<ReceiveFileView />} />
+            <Route path="/chat" element={<ChatView token={token} currentUser={user} />} />
             {user && user.is_admin && (
               <Route path="/admin" element={<AdminView token={token} currentUser={user} />} />
             )}
@@ -830,32 +924,17 @@ function App() {
 
       {toast && (
         <div
-          className={`fixed bottom-6 right-6 z-[90] px-4 py-3 rounded-lg shadow-lg text-sm font-medium ${
+          className={`fixed bottom-6 right-6 z-[90] px-4 py-3 rounded-lg shadow-lg text-sm font-medium max-w-md ${
             toast.kind === 'error'
               ? 'bg-red-600 text-white'
+              : toast.kind === 'info'
+              ? 'bg-slate-800 text-white'
               : 'bg-green-600 text-white'
           }`}
         >
           {toast.message}
         </div>
       )}
-
-      {/* P2P incoming file offer */}
-      <P2PReceivePromptModal
-        offer={incomingOffer}
-        onAccept={() => {
-          if (incomingOffer) {
-            webrtcManager.respondToOffer(incomingOffer.peerId, incomingOffer.fileId, true);
-          }
-          setIncomingOffer(null);
-        }}
-        onDecline={() => {
-          if (incomingOffer) {
-            webrtcManager.respondToOffer(incomingOffer.peerId, incomingOffer.fileId, false);
-          }
-          setIncomingOffer(null);
-        }}
-      />
 
       {/* P2P received file preview */}
       <P2PReceivedPreviewModal
@@ -889,6 +968,14 @@ function App() {
         isOpen={showGuestModal && !user}
         onClose={() => { }}
         onSubmit={handleGuestLogin}
+      />
+
+      <AvatarPickerModal
+        open={showAvatarPicker && !!user && !user.is_guest}
+        onClose={() => setShowAvatarPicker(false)}
+        token={token}
+        currentAvatar={user?.avatar_url || null}
+        onSaved={(url) => setUser((prev) => (prev ? { ...prev, avatar_url: url } : prev))}
       />
 
       <AuthModal

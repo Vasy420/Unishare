@@ -4,8 +4,12 @@ import { QRCodeSVG } from 'qrcode.react';
 import webrtcManager from '../utils/webrtcManager2';
 import { isOfflineMode } from '../utils/offline';
 
+const CLOUD_UPLOAD_MAX_BYTES = 100 * 1024 * 1024; // keep in sync with App.js
+const CLOUD_UPLOAD_MAX_LABEL = '100 MB';
+
 const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
     const isDriveFile = file?.source === 'google_drive' || !!file?.webViewLink;
+    const exceedsCloudCap = !!file && !isDriveFile && file.size > CLOUD_UPLOAD_MAX_BYTES;
     const [activeTab, setActiveTab] = useState(isDriveFile ? 'upload' : 'share'); // Default to upload for Drive files
     const [shareOptions, setShareOptions] = useState({
         isPublic: true,
@@ -15,7 +19,12 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
     const [p2pLink, setP2pLink] = useState(null);
     const [copied, setCopied] = useState(false);
     const [peerStatus, setPeerStatus] = useState({}); // userId -> {label, kind}
+    const [customName, setCustomName] = useState('');
     const qrRef = useRef(null);
+
+    useEffect(() => {
+        if (file) setCustomName(file.name || '');
+    }, [file]);
 
     const setStatusForPeer = (userId, label, kind, autoClearMs = 0) => {
         setPeerStatus(prev => ({ ...prev, [userId]: { label, kind } }));
@@ -44,12 +53,13 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                 }
             }
 
-            // Get online users (only relevant for P2P)
+            // Get online users (only relevant for P2P) — exclude admins from the visible list.
             if (!isDriveFile) {
-                setOnlineUsers(webrtcManager.onlineUsers || []);
+                const filterAdmins = (users) => (users || []).filter((u) => !u.is_admin);
+                setOnlineUsers(filterAdmins(webrtcManager.onlineUsers));
                 const originalHandler = webrtcManager.onOnlineUsersChange;
                 webrtcManager.onOnlineUsersChange = (users) => {
-                    setOnlineUsers(users);
+                    setOnlineUsers(filterAdmins(users));
                     if (originalHandler) originalHandler(users);
                 };
                 return () => {
@@ -62,7 +72,12 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
     if (!isOpen || !file) return null;
 
     const handleCloudUpload = () => {
-        onUpload(file, shareOptions);
+        const finalName = (customName || '').trim() || file.name;
+        // Rename file if user changed it. Preserves type and content.
+        const fileToUpload = finalName === file.name
+            ? file
+            : new File([file], finalName, { type: file.type });
+        onUpload(fileToUpload, shareOptions);
     };
 
     const handleCopyLink = () => {
@@ -219,12 +234,16 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                                                               const uid = user.id;
                                                               try {
                                                                   setStatusForPeer(uid, 'Connecting...', 'pending');
-                                                                  const dc = webrtcManager.dataChannels.get(uid);
-                                                                  if (!dc || dc.readyState !== 'open') {
-                                                                      if (!dc) await webrtcManager.initiateConnection(uid);
-                                                                      await webrtcManager.waitForDataChannelOpen(uid, 10000);
+                                                                  // Same-browser tabs: skip WebRTC, BroadcastChannel handles transfer
+                                                                  if (!webrtcManager.canSendViaBroadcast(uid)) {
+                                                                      const dc = webrtcManager.dataChannels.get(uid);
+                                                                      if (!dc || dc.readyState !== 'open') {
+                                                                          if (dc) webrtcManager.closePeerConnection(uid);
+                                                                          await webrtcManager.initiateConnection(uid);
+                                                                          await webrtcManager.waitForDataChannelOpen(uid, 15000);
+                                                                      }
                                                                   }
-                                                                  setStatusForPeer(uid, 'Waiting for accept...', 'pending');
+                                                                  setStatusForPeer(uid, 'Sending...', 'pending');
                                                                   await webrtcManager.sendFile(uid, file, (update) => {
                                                                       if (update?.type === 'accepted') {
                                                                           setStatusForPeer(uid, 'Sending...', 'pending');
@@ -271,6 +290,28 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
 
                     {activeTab === 'upload' && (
                         <div className="space-y-4 animate-in slide-in-from-right-4 fade-in duration-300">
+                            {exceedsCloudCap && (
+                                <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-sm text-red-700 dark:text-red-300">
+                                    File is {(file.size / (1024 * 1024)).toFixed(1)} MB. Cloud uploads are capped at {CLOUD_UPLOAD_MAX_LABEL}. Use the Share tab to send it directly to a peer.
+                                </div>
+                            )}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                    File name
+                                </label>
+                                <input
+                                    type="text"
+                                    value={customName}
+                                    onChange={(e) => setCustomName(e.target.value)}
+                                    disabled={uploading}
+                                    placeholder={file?.name || 'file name'}
+                                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-60"
+                                />
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    Keep the extension (e.g. .pdf, .png) so previews work.
+                                </p>
+                            </div>
+
                             <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Visibility</p>
 
                             <label className="flex items-start space-x-3 cursor-pointer p-3 rounded-xl border border-gray-200 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-all">
@@ -354,10 +395,10 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                         </button>
                         <button
                             onClick={handleCloudUpload}
-                            disabled={uploading}
-                            className={`flex-1 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md flex items-center justify-center space-x-2 ${uploading ? 'opacity-70 cursor-not-allowed' : ''}`}
+                            disabled={uploading || exceedsCloudCap}
+                            className={`flex-1 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md flex items-center justify-center space-x-2 ${(uploading || exceedsCloudCap) ? 'opacity-70 cursor-not-allowed' : ''}`}
                         >
-                            {uploading ? 'Uploading...' : 'Upload to Cloud'}
+                            {uploading ? 'Uploading...' : exceedsCloudCap ? `Too large (> ${CLOUD_UPLOAD_MAX_LABEL})` : 'Upload to Cloud'}
                         </button>
                     </div>
                 )}

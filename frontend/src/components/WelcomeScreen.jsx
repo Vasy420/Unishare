@@ -1,144 +1,176 @@
-import React, { useState } from 'react';
-import { Upload, Share2, Zap, Shield, Cloud, Music } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Share2, Upload, Zap, Shield, Cloud, ArrowRight, MessageCircle, HardDrive } from 'lucide-react';
 import RickrollModal from './RickrollModal';
+import AmbientBackground from './AmbientBackground';
+
+const KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
 
 const WelcomeScreen = ({ onGetStarted }) => {
   const [showRickroll, setShowRickroll] = useState(false);
+  const konamiIdxRef = useRef(0);
+  const rickTypingRef = useRef('');
+
+  // Secret rickroll triggers: Konami code OR typing "rick".
+  useEffect(() => {
+    const onKey = (e) => {
+      // Konami
+      const expected = KONAMI[konamiIdxRef.current];
+      if (e.key === expected || e.key.toLowerCase() === expected) {
+        konamiIdxRef.current += 1;
+        if (konamiIdxRef.current >= KONAMI.length) {
+          konamiIdxRef.current = 0;
+          setShowRickroll(true);
+          return;
+        }
+      } else {
+        konamiIdxRef.current = e.key === KONAMI[0] ? 1 : 0;
+      }
+
+      // Type "rick"
+      if (/^[a-z]$/i.test(e.key)) {
+        rickTypingRef.current = (rickTypingRef.current + e.key.toLowerCase()).slice(-4);
+        if (rickTypingRef.current === 'rick') {
+          rickTypingRef.current = '';
+          setShowRickroll(true);
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
     <>
-      <div className="fixed inset-0 bg-gradient-to-br from-purple-600 via-pink-500 to-red-500 overflow-hidden">
-        {/* Animated background elements */}
-        <div className="absolute inset-0 opacity-20">
-          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-white rounded-full mix-blend-multiply filter blur-xl animate-blob"></div>
-          <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-yellow-200 rounded-full mix-blend-multiply filter blur-xl animate-blob animation-delay-2000"></div>
-          <div className="absolute bottom-1/4 left-1/3 w-96 h-96 bg-pink-200 rounded-full mix-blend-multiply filter blur-xl animate-blob animation-delay-4000"></div>
-        </div>
+      <div className="dark fixed inset-0 overflow-hidden text-white">
+        <AmbientBackground />
 
         {/* Main content */}
-        <div className="relative min-h-screen flex items-center justify-center p-4">
-          <div className="max-w-4xl w-full">
-            {/* Hero section */}
-            <div className="text-center mb-12 animate-in fade-in slide-in-from-bottom duration-700">
-              <div className="inline-flex items-center justify-center mb-6">
+        <div className="relative min-h-screen flex items-center justify-center p-6">
+          <div className="max-w-5xl w-full">
+            {/* Hero */}
+            <div className="text-center mb-14 welcome-stagger" style={{ animationDelay: '50ms' }}>
+              <div className="inline-flex items-center justify-center mb-7">
                 <div className="relative">
-                  <Share2 className="w-20 h-20 text-white drop-shadow-2xl" />
-                  <Zap className="w-8 h-8 text-yellow-300 absolute -top-2 -right-2 animate-pulse" />
+                  <div className="absolute inset-0 bg-blue-500/40 blur-2xl rounded-full" />
+                  <div className="relative w-24 h-24 rounded-3xl bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-600 shadow-2xl flex items-center justify-center ring-1 ring-white/20">
+                    <Share2 className="w-12 h-12 text-white drop-shadow" />
+                  </div>
+                  <Zap className="w-6 h-6 text-yellow-300 absolute -top-1 -right-1 drop-shadow animate-zip" />
                 </div>
               </div>
-              
-              <h1 className="text-6xl md:text-7xl font-bold text-white mb-4 drop-shadow-2xl">
-                Welcome to UniShare
+
+              <h1 className="text-6xl md:text-8xl font-extrabold tracking-tight mb-5 leading-[0.95]">
+                <span className="bg-gradient-to-r from-blue-300 via-indigo-200 to-purple-300 bg-clip-text text-transparent">
+                  UniShare
+                </span>
               </h1>
-              
-              <p className="text-xl md:text-2xl text-white/90 mb-2 drop-shadow-lg">
-                Share files instantly, anywhere, anytime
+
+              <p className="text-xl md:text-2xl text-slate-200/90 font-light max-w-2xl mx-auto">
+                Move files between devices the way they were meant to move &mdash;
+                <span className="text-white font-medium"> instantly, privately, anywhere</span>.
               </p>
-              
-              <p className="text-lg text-white/80 drop-shadow-lg">
-                P2P • Cloud • Google Drive • All in one place
-              </p>
+
+              <div className="mt-6 flex items-center justify-center gap-2 text-sm text-slate-300/80 flex-wrap">
+                <PillStat icon={<Zap className="w-3.5 h-3.5" />} label="P2P WebRTC" />
+                <span className="text-slate-600">·</span>
+                <PillStat icon={<Cloud className="w-3.5 h-3.5" />} label="Cloud" />
+                <span className="text-slate-600">·</span>
+                <PillStat icon={<HardDrive className="w-3.5 h-3.5" />} label="Google Drive" />
+                <span className="text-slate-600">·</span>
+                <PillStat icon={<MessageCircle className="w-3.5 h-3.5" />} label="Live Chat" />
+              </div>
             </div>
 
-            {/* Features grid */}
-            <div className="grid md:grid-cols-3 gap-6 mb-12 animate-in fade-in slide-in-from-bottom duration-700 delay-300">
+            {/* Feature cards */}
+            <div className="grid md:grid-cols-3 gap-5 mb-12">
               <FeatureCard
-                icon={<Upload className="w-8 h-8" />}
-                title="Easy Upload"
-                description="Drag & drop files or pick from Google Drive"
+                icon={<Upload className="w-6 h-6" />}
+                title="Upload anything"
+                description="Drag, drop, import from Drive, or stream multi-GB files directly between tabs."
+                delay={250}
               />
               <FeatureCard
-                icon={<Zap className="w-8 h-8" />}
-                title="Lightning Fast"
-                description="P2P transfers for maximum speed"
+                icon={<Zap className="w-6 h-6" />}
+                title="Lightning P2P"
+                description="WebRTC + BroadcastChannel for same-network speeds. Receiver streams straight to disk."
+                delay={400}
               />
               <FeatureCard
-                icon={<Shield className="w-8 h-8" />}
-                title="Secure"
-                description="Your files, your control, always"
+                icon={<Shield className="w-6 h-6" />}
+                title="Yours, encrypted"
+                description="Per-file Fernet keys, RSA-wrapped. Guest data wipes itself when you leave."
+                delay={550}
               />
             </div>
 
-            {/* CTA Button */}
-            <div className="text-center animate-in fade-in slide-in-from-bottom duration-700 delay-500">
+            {/* CTA */}
+            <div className="text-center welcome-stagger" style={{ animationDelay: '700ms' }}>
               <button
                 onClick={onGetStarted}
-                className="group relative inline-flex items-center gap-3 px-12 py-5 bg-white text-purple-600 rounded-2xl font-bold text-xl shadow-2xl hover:shadow-purple-500/50 transform hover:scale-105 transition-all duration-300"
+                className="group relative inline-flex items-center gap-3 px-10 py-5 rounded-2xl font-semibold text-lg text-white shadow-2xl transition-all duration-300 hover:scale-[1.03] focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-400/50"
               >
-                <Cloud className="w-6 h-6 group-hover:animate-bounce" />
-                Get Started
-                <div className="absolute inset-0 rounded-2xl bg-gradient-to-r from-purple-600 to-pink-600 opacity-0 group-hover:opacity-20 transition-opacity duration-300"></div>
+                <span className="absolute inset-0 rounded-2xl bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-600 shadow-[0_10px_60px_-15px_rgba(99,102,241,0.7)]" />
+                <span className="absolute inset-0 rounded-2xl bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                <span className="relative">Enter UniShare</span>
+                <ArrowRight className="relative w-5 h-5 transition-transform group-hover:translate-x-1" />
               </button>
-              
-              <p className="mt-4 text-white/70 text-sm">
-                No signup required • Start sharing instantly
+
+              <p className="mt-5 text-slate-400 text-sm">
+                No signup required &middot; Guest mode wipes itself when you leave
+              </p>
+              <p className="mt-1 text-slate-600 text-[11px] tracking-wider uppercase">
+                Try the Konami code if you&rsquo;re bored
               </p>
             </div>
           </div>
         </div>
-
-        {/* Easter Egg Button - Hidden in bottom left corner */}
-        <button
-          onClick={() => setShowRickroll(true)}
-          className="fixed bottom-4 left-4 w-12 h-12 rounded-full bg-white/10 backdrop-blur-sm hover:bg-white/20 transition-all duration-300 flex items-center justify-center group opacity-30 hover:opacity-100"
-          title="🎵"
-        >
-          <Music className="w-5 h-5 text-white group-hover:animate-spin" />
-        </button>
       </div>
 
-      {/* Rickroll Modal */}
       <RickrollModal isOpen={showRickroll} onClose={() => setShowRickroll(false)} />
 
       <style>{`
-        @keyframes blob {
-          0%, 100% { transform: translate(0, 0) scale(1); }
-          25% { transform: translate(20px, -20px) scale(1.1); }
-          50% { transform: translate(-20px, 20px) scale(0.9); }
-          75% { transform: translate(20px, 20px) scale(1.05); }
+        @keyframes welcomeStaggerIn {
+          from { opacity: 0; transform: translateY(16px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .welcome-stagger {
+          opacity: 0;
+          animation: welcomeStaggerIn 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
 
-        .animate-blob {
-          animation: blob 7s infinite;
+        @keyframes zip {
+          0%, 100% { transform: scale(1) rotate(0deg); }
+          50% { transform: scale(1.2) rotate(8deg); }
         }
+        .animate-zip { animation: zip 2.4s ease-in-out infinite; }
 
-        .animation-delay-2000 {
-          animation-delay: 2s;
-        }
-
-        .animation-delay-4000 {
-          animation-delay: 4s;
-        }
-
-        .animate-in {
-          animation: fadeInUp 0.7s ease-out forwards;
-        }
-
-        @keyframes fadeInUp {
-          from {
-            opacity: 0;
-            transform: translateY(20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
+        @media (prefers-reduced-motion: reduce) {
+          .welcome-stagger, .animate-zip { animation: none !important; opacity: 1 !important; }
         }
       `}</style>
     </>
   );
 };
 
-const FeatureCard = ({ icon, title, description }) => {
-  return (
-    <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-6 text-center transform hover:scale-105 transition-all duration-300 hover:bg-white/20">
-      <div className="inline-flex items-center justify-center w-16 h-16 bg-white/20 rounded-xl mb-4 text-white">
-        {icon}
-      </div>
-      <h3 className="text-xl font-bold text-white mb-2">{title}</h3>
-      <p className="text-white/80">{description}</p>
+const PillStat = ({ icon, label }) => (
+  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800/60 border border-white/10">
+    <span className="text-blue-300">{icon}</span>
+    <span className="text-slate-200">{label}</span>
+  </span>
+);
+
+// No backdrop-blur — that triggers a full-page composite on every paint, killing perf on weak GPUs.
+const FeatureCard = ({ icon, title, description, delay = 0 }) => (
+  <div
+    className="welcome-stagger group relative rounded-2xl p-6 bg-slate-800/50 border border-white/10 hover:bg-slate-800/70 hover:border-white/20 transition-colors duration-300"
+    style={{ animationDelay: `${delay}ms` }}
+  >
+    <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500/30 to-indigo-500/30 text-blue-200 mb-4 ring-1 ring-inset ring-white/10">
+      {icon}
     </div>
-  );
-};
+    <h3 className="text-lg font-semibold text-white mb-1.5">{title}</h3>
+    <p className="text-sm text-slate-300/80 leading-relaxed">{description}</p>
+  </div>
+);
 
 export default WelcomeScreen;
