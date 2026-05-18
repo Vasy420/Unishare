@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
 import { Moon, Sun, LogOut, Upload as UploadIcon, HardDrive, History, LogIn, FileText, Menu, X, MessageCircle } from 'lucide-react';
@@ -64,6 +64,7 @@ function App() {
   const [welcomeVisible, setWelcomeVisible] = useState(false);
   const [welcomeExiting, setWelcomeExiting] = useState(false);
   const [loginVisible, setLoginVisible] = useState(false);
+  const hadUserRef = useRef(false);
   const [showDriveConnectModal, setShowDriveConnectModal] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
@@ -89,8 +90,12 @@ function App() {
 
   // Show welcome on every load when no user is signed in.
   // User explicitly clicks "Enter UniShare" to dismiss it for this session.
+  // Skip welcome if the user just logged out (hadUserRef tracks this).
   useEffect(() => {
-    if (!authLoading && !user) {
+    if (user) {
+      hadUserRef.current = true;
+    }
+    if (!authLoading && !user && !hadUserRef.current) {
       setShowWelcome(true);
     }
   }, [authLoading, user]);
@@ -555,6 +560,11 @@ function App() {
     logout();
     setFiles([]);
     webrtcManager.disconnect();
+    // Hide welcome so only login page shows after logout
+    setShowWelcome(false);
+    setWelcomeVisible(false);
+    setShowLoginPage(true);
+    setLoginVisible(true);
     navigate('/');
   };
 

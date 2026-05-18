@@ -29,8 +29,10 @@ class WebRTCManager {
 
   connect(userId, backendUrl, username = null, emoji = null) {
     this.userId = userId;
-    this.username = username || 'Anonymous';
-    this.emoji = emoji || '👤';
+    this.backendUrl = backendUrl;
+    // Preserve existing username/emoji on reconnect if not explicitly provided
+    this.username = username || this.username || 'Anonymous';
+    this.emoji = emoji || this.emoji || '👤';
 
     if (isOfflineMode()) {
       this.enableBroadcastSignaling();
@@ -93,7 +95,7 @@ class WebRTCManager {
         this.reconnectAttempts++;
         setTimeout(() => {
           console.log(`Reconnecting... Attempt ${this.reconnectAttempts}`);
-          this.connect(userId, backendUrl);
+          this.connect(this.userId, this.backendUrl, this.username, this.emoji);
         }, 2000 * this.reconnectAttempts);
       }
     };

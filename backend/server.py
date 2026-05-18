@@ -179,8 +179,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ Index creation warning: {e}")
 
-    # Background: registered user message TTL sweep (1 day)
-    ttl_task = asyncio.create_task(_registered_msg_ttl_loop())
+    # Background: message TTL sweep (2 hours for ALL messages)
+    ttl_task = asyncio.create_task(_all_msg_ttl_loop())
 
     yield
 
@@ -224,8 +224,8 @@ import asyncio
 # Pending guest cleanup tasks keyed by user_id. Cancelled on reconnect within window.
 guest_msg_cleanup_tasks: Dict[str, "asyncio.Task"] = {}
 GUEST_MSG_GRACE_SECONDS = 5 * 60          # 5 minutes after WS disconnect
-REGISTERED_MSG_TTL_SECONDS = 24 * 60 * 60  # 1 day for registered users
-REGISTERED_CLEANUP_INTERVAL = 60 * 5       # sweep registered TTL every 5 minutes
+ALL_MSG_TTL_SECONDS = 60 * 60          # 1 hour for ALL messages
+TTL_CLEANUP_INTERVAL = 60 * 5             # sweep TTL every 5 minutes
 
 
 async def _delete_user_messages(user_id: str, reason: str) -> int:
@@ -271,31 +271,20 @@ def cancel_guest_msg_cleanup(user_id: str):
         task.cancel()
 
 
-async def _registered_msg_ttl_loop():
-    """Background sweep: delete messages from registered users older than 1 day."""
+async def _all_msg_ttl_loop():
+    """Background sweep: hard-delete ALL chat messages older than 1 hour."""
     while True:
         try:
-            await asyncio.sleep(REGISTERED_CLEANUP_INTERVAL)
-            cutoff = (datetime.now(timezone.utc) - timedelta(seconds=REGISTERED_MSG_TTL_SECONDS)).isoformat()
-            # Find registered authors via users collection
-            registered_ids = {u["id"] async for u in db.users.find({"is_guest": {"$ne": True}}, {"id": 1})}
-            if not registered_ids:
-                continue
-            result = await db.chat_messages.update_many(
-                {
-                    "user_id": {"$in": list(registered_ids)},
-                    "created_at": {"$lt": cutoff},
-                    "deleted": {"$ne": True},
-                },
-                {"$set": {"deleted": True, "deleted_by": "ttl"}},
-            )
-            if result.modified_count > 0:
-                logger.info(f"TTL (registered) cleared {result.modified_count} messages older than 1 day")
+            await asyncio.sleep(TTL_CLEANUP_INTERVAL)
+            cutoff = (datetime.now(timezone.utc) - timedelta(seconds=ALL_MSG_TTL_SECONDS)).isoformat()
+            result = await db.chat_messages.delete_many({"created_at": {"$lt": cutoff}})
+            if result.deleted_count > 0:
+                logger.info(f"TTL sweep cleared {result.deleted_count} messages older than 1 hour")
                 await manager.broadcast_all({"type": "chat_clear", "scope": "ttl-sweep", "deleted_by": "ttl"})
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Registered TTL loop error: {e}")
+            logger.error(f"TTL loop error: {e}")
 
 
 
@@ -1359,17 +1348,14 @@ async def chat_clear_own(current_user: User = Depends(get_current_user)):
 
 @api_router.delete("/admin/chat/messages")
 async def chat_clear_all(admin: User = Depends(get_admin_user)):
-    """Admin: soft-delete every non-deleted chat message."""
-    result = await db.chat_messages.update_many(
-        {"deleted": {"$ne": True}},
-        {"$set": {"deleted": True, "deleted_by": "admin"}},
-    )
+    """Admin: hard-delete every chat message."""
+    result = await db.chat_messages.delete_many({})
     await manager.broadcast_all({
         "type": "chat_clear",
         "scope": "all",
         "deleted_by": "admin",
     })
-    return {"deleted": result.modified_count}
+    return {"deleted": result.deleted_count}
 
 
 @api_router.post("/chat/messages/{message_id}/pin")

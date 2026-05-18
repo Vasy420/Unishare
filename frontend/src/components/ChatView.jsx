@@ -173,12 +173,23 @@ const ChatView = ({ token, currentUser }) => {
       } else if (event.type === 'chat_clear') {
         const scope = event.scope;
         const by = event.deleted_by || 'self';
-        setMessages((prev) => prev.map((m) => {
-          if (m.deleted) return m;
-          if (scope === 'all') return { ...m, deleted: true, deleted_by: by, content: '', reactions: {}, pinned: false };
-          if (scope === 'user' && m.user_id === event.user_id) return { ...m, deleted: true, deleted_by: by, content: '', reactions: {}, pinned: false };
-          return m;
-        }));
+        // Admin clear-all or TTL sweep: physically remove messages
+        if (scope === 'all' || scope === 'ttl-sweep') {
+          setMessages((prev) => prev.filter((m) => {
+            if (scope === 'all') return false;
+            if (scope === 'ttl-sweep') return false;
+            return true;
+          }));
+        } else {
+          // User scope (guest disconnect or self-clear): mark as deleted
+          setMessages((prev) => prev.map((m) => {
+            if (m.deleted) return m;
+            if (scope === 'user' && m.user_id === event.user_id) {
+              return { ...m, deleted: true, deleted_by: by, content: '', reactions: {}, pinned: false };
+            }
+            return m;
+          }));
+        }
       } else if (event.type === 'chat_react') {
         setMessages((prev) => prev.map((m) => (m.id === event.message_id ? { ...m, reactions: event.reactions } : m)));
       } else if (event.type === 'chat_pin') {
@@ -668,7 +679,7 @@ const ChatView = ({ token, currentUser }) => {
         open={!!clearScope}
         title={clearScope === 'all' ? 'Clear ALL chat messages?' : 'Clear your messages?'}
         message={clearScope === 'all'
-          ? 'Every message from every user will be marked as deleted for everyone. This cannot be undone.'
+          ? 'Every message from every user will be permanently deleted. This cannot be undone.'
           : 'Every message you have sent will be marked as deleted. This cannot be undone.'}
         confirmLabel={clearScope === 'all' ? 'Clear all' : 'Clear mine'}
         destructive
