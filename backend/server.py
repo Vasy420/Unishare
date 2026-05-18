@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Dict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from passlib.context import CryptContext
 from jose import JWTError, jwt
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
@@ -29,6 +28,7 @@ import io
 import json
 import requests
 import time
+import bcrypt
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
@@ -52,8 +52,6 @@ db = client[os.environ['DB_NAME']]
 UPLOAD_DIR = ROOT_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# Security setup
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
@@ -512,8 +510,28 @@ class DriveFileInfo(BaseModel):
 
 ADMIN_CREDS_PATH = ROOT_DIR / "ADMIN_CREDENTIALS.txt"
 
+def _truncate_to_72_bytes(password: str) -> bytes:
+    """Truncate password to 72 bytes (bcrypt limit), not 72 characters."""
+    encoded = password.encode('utf-8')
+    if len(encoded) <= 72:
+        return encoded
+    return encoded[:72]
+
+
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    truncated = _truncate_to_72_bytes(password)
+    return bcrypt.hashpw(truncated, bcrypt.gensalt()).decode('utf-8')
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    truncated = _truncate_to_72_bytes(plain_password)
+    try:
+        return bcrypt.checkpw(truncated, hashed_password.encode('utf-8'))
+    except ValueError:
+        # Fallback for legacy passlib-generated hashes (bcrypt 4.x compatibility)
+        from passlib.context import CryptContext
+        legacy_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        return legacy_ctx.verify(truncated.decode('utf-8', errors='ignore'), hashed_password)
 
 
 async def ensure_admin_user():
@@ -569,9 +587,6 @@ async def ensure_admin_user():
             logger.info(f"Admin account ensured for {email}")
     except Exception as e:
         logger.error(f"ensure_admin_user failed: {e}")
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()

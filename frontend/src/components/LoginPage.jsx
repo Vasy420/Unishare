@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Mail, Lock, User, Upload as UploadIcon, ArrowRight, ArrowLeft } from 'lucide-react';
 import axios from 'axios';
-import AmbientBackground from './AmbientBackground';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -56,8 +55,6 @@ const LoginPage = ({ onSuccess, onGuestMode, onBack }) => {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
-      <AmbientBackground />
-
       {onBack && (
         <button
           onClick={onBack}

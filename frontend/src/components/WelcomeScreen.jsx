@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Share2, Upload, Zap, Shield, Cloud, ArrowRight, MessageCircle, HardDrive } from 'lucide-react';
 import RickrollModal from './RickrollModal';
-import AmbientBackground from './AmbientBackground';
 
 const KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
 
@@ -42,7 +41,7 @@ const WelcomeScreen = ({ onGetStarted }) => {
   return (
     <>
       <div className="dark fixed inset-0 overflow-hidden text-white">
-        <AmbientBackground />
+        {/* AmbientBackground is rendered once at the App level */}
 
         {/* Main content */}
         <div className="relative min-h-screen flex items-center justify-center p-6">

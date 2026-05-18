@@ -26,6 +26,7 @@ import ChatView from './components/ChatView';
 import AvatarPickerModal from './components/AvatarPickerModal';
 import AmbientBackground from './components/AmbientBackground';
 import P2PReceivedPreviewModal from './components/P2PReceivedPreviewModal';
+import LoadingScreen from './components/LoadingScreen';
 import webrtcManager from './utils/webrtcManager2';
 import { isOfflineMode } from './utils/offline';
 import './App.css';
@@ -59,6 +60,10 @@ function App() {
   const [dataLimitReached, setDataLimitReached] = useState(false);
   const [driveConfigured, setDriveConfigured] = useState(true);
   const [showWelcome, setShowWelcome] = useState(false);
+  const [showLoading, setShowLoading] = useState(true);
+  const [welcomeVisible, setWelcomeVisible] = useState(false);
+  const [welcomeExiting, setWelcomeExiting] = useState(false);
+  const [loginVisible, setLoginVisible] = useState(false);
   const [showDriveConnectModal, setShowDriveConnectModal] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
@@ -89,6 +94,13 @@ function App() {
       setShowWelcome(true);
     }
   }, [authLoading, user]);
+
+  // Trigger welcome entrance animation once it mounts after loading screen exits
+  useEffect(() => {
+    if (showWelcome && !welcomeVisible) {
+      requestAnimationFrame(() => setWelcomeVisible(true));
+    }
+  }, [showWelcome, welcomeVisible]);
 
   // Wipe guest data on tab close / page hide via sendBeacon.
   // Beacons cannot set Authorization headers, so the token goes in the URL.
@@ -167,11 +179,12 @@ function App() {
   }, [setToken, setUser, token]);
 
   // Check auth and ask for guest username when needed
+  // Skip if welcome is exiting to avoid interfering with the manual transition
   useEffect(() => {
-    if (!authLoading && !user && !showWelcome && !location.pathname.startsWith('/receive')) {
+    if (!authLoading && !user && !showWelcome && !welcomeExiting && !location.pathname.startsWith('/receive')) {
       setShowLoginPage(true);
     }
-  }, [authLoading, user, showWelcome, location]);
+  }, [authLoading, user, showWelcome, welcomeExiting, location]);
 
   // Fetch files when user is available
   useEffect(() => {
@@ -477,13 +490,32 @@ function App() {
   };
 
   const handleWelcomeGetStarted = () => {
-    setShowWelcome(false);
+    // Start welcome exit
+    setWelcomeExiting(true);
+    // Mount login page (invisible)
     setShowLoginPage(true);
+    setLoginVisible(false);
+    // Staggered: start login entrance after welcome begins exiting
+    setTimeout(() => setLoginVisible(true), 350);
+    // Unmount welcome after its exit transition completes
+    setTimeout(() => {
+      setShowWelcome(false);
+      setWelcomeExiting(false);
+    }, 750);
   };
 
   const handleBackToWelcome = () => {
-    setShowLoginPage(false);
+    // Start login exit
+    setLoginVisible(false);
+    // Mount welcome page (invisible)
     setShowWelcome(true);
+    setWelcomeVisible(false);
+    // Staggered: start welcome entrance after login begins exiting
+    setTimeout(() => setWelcomeVisible(true), 350);
+    // Unmount login after its exit transition completes
+    setTimeout(() => {
+      setShowLoginPage(false);
+    }, 750);
   };
 
   const handleDriveConnectNow = async () => {
@@ -526,37 +558,98 @@ function App() {
     navigate('/');
   };
 
-  if (authLoading) {
+  // Shared ambient background for all pre-auth screens (single canvas, no reset)
+  const sharedAmbient = (
+    <div
+      key="shared-ambient"
+      className="dark fixed inset-0 overflow-hidden text-white pointer-events-none"
+      style={{ zIndex: 0 }}
+    >
+      <AmbientBackground />
+    </div>
+  );
+
+  // Epic loading screen → welcome crossfade (sequential: loading exits fully before welcome fades in)
+  if (showLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600 dark:text-gray-400">Loading...</p>
-        </div>
-      </div>
+      <>
+        {sharedAmbient}
+        <LoadingScreen
+          onBeginExit={() => {
+            /* sequential transition: wait until loading is gone before mounting welcome */
+          }}
+          onFinished={() => {
+            setShowLoading(false);
+            setShowWelcome(true);
+          }}
+          minDuration={3200}
+        />
+      </>
     );
   }
 
-  if (showWelcome) {
-    return <WelcomeScreen onGetStarted={handleWelcomeGetStarted} />;
+  if (authLoading) {
+    return (
+      <>
+        {sharedAmbient}
+        <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+            <p className="mt-4 text-gray-600 dark:text-gray-400">Loading...</p>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // Unified welcome ↔ login transition area
+  const showWelcomeLayer = showWelcome || welcomeExiting;
+  const showLoginLayer = showLoginPage && !user;
+
+  if (showWelcomeLayer || showLoginLayer) {
+    return (
+      <>
+        {sharedAmbient}
+        {showWelcomeLayer && (
+          <div
+            key="welcome-wrapper"
+            className="fixed inset-0 z-10"
+            style={{
+              opacity: welcomeExiting ? 0 : welcomeVisible ? 1 : 0,
+              transition: 'opacity 700ms cubic-bezier(0.16, 1, 0.3, 1)',
+              pointerEvents: welcomeExiting ? 'none' : 'auto',
+            }}
+          >
+            <WelcomeScreen onGetStarted={handleWelcomeGetStarted} />
+          </div>
+        )}
+        {showLoginLayer && (
+          <div
+            key="login-wrapper"
+            className="fixed inset-0 z-10"
+            style={{
+              opacity: loginVisible ? 1 : 0,
+              transition: 'opacity 700ms cubic-bezier(0.16, 1, 0.3, 1)',
+              pointerEvents: loginVisible ? 'auto' : 'none',
+            }}
+          >
+            <LoginPage
+              onSuccess={handleAuth}
+              onGuestMode={() => {
+                setShowLoginPage(false);
+                setShowGuestModal(true);
+              }}
+              onBack={handleBackToWelcome}
+            />
+          </div>
+        )}
+      </>
+    );
   }
 
   // Handle /receive route for unauthenticated users (P2P file receipt)
   if (location.pathname === '/receive') {
     return <ReceiveFileView />;
-  }
-
-  if (showLoginPage && !user) {
-    return (
-      <LoginPage
-        onSuccess={handleAuth}
-        onGuestMode={() => {
-          setShowLoginPage(false);
-          setShowGuestModal(true);
-        }}
-        onBack={handleBackToWelcome}
-      />
-    );
   }
 
   return (
