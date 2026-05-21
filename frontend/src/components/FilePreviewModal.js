@@ -1,12 +1,15 @@
 import React from 'react';
 import { X, Eye, Download, ExternalLink } from 'lucide-react';
+import { getApiUrl } from '../utils/backendUrl';
+
+const API = getApiUrl();
 
 const FilePreviewModal = ({ file, onClose, token }) => {
     if (!file) return null;
 
     const authQS = token ? `?token=${encodeURIComponent(token)}` : '';
-    const previewUrl = `${process.env.REACT_APP_BACKEND_URL}/api/files/${file.id}/preview${authQS}`;
-    const downloadUrl = `${process.env.REACT_APP_BACKEND_URL}/api/files/${file.id}/download${authQS}`;
+    const previewUrl = `${API}/files/${file.id}/preview${authQS}`;
+    const downloadUrl = `${API}/files/${file.id}/download${authQS}`;
 
     // Determine if file is previewable
     const isImage = file.content_type?.startsWith('image/');

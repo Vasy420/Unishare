@@ -45,6 +45,16 @@ const ReceiveFileView = () => {
     const fileId = searchParams.get('file');
     const fileName = searchParams.get('name') || 'Unknown File';
     const fileSize = searchParams.get('size');
+    const senderName = searchParams.get('from') || 'Someone';
+    const senderEmoji = searchParams.get('emoji') || '👤';
+    const thumb = searchParams.get('thumb') || '';
+
+    const previewMimeType = guessMimeFromName(fileName);
+    const isImage = previewMimeType.startsWith('image/');
+    const isVideo = previewMimeType.startsWith('video/');
+    const isAudio = previewMimeType.startsWith('audio/');
+    const isPDF = previewMimeType === 'application/pdf';
+    const isText = previewMimeType.startsWith('text/') || previewMimeType === 'application/json' || previewMimeType === 'application/javascript';
 
     const blobUrl = useMemo(() => {
         if (!receivedBlob) return null;
@@ -64,13 +74,7 @@ const ReceiveFileView = () => {
         }
     }, [peerId, fileId]);
 
-    const mimeType = receivedMimeType || guessMimeFromName(fileInfo?.name || fileName) || '';
-    const isImage = mimeType.startsWith('image/');
-    const isVideo = mimeType.startsWith('video/');
-    const isAudio = mimeType.startsWith('audio/');
-    const isPDF = mimeType === 'application/pdf';
-    const isText = mimeType.startsWith('text/') || mimeType === 'application/json' || mimeType === 'application/javascript';
-    const canPreview = isImage || isVideo || isAudio || isPDF || isText;
+    const mimeType = receivedMimeType || previewMimeType || '';
 
     useEffect(() => {
         if (isText && receivedBlob && textContent === null) {
@@ -169,16 +173,12 @@ const ReceiveFileView = () => {
                                     <div className="flex flex-wrap items-center gap-x-2 text-xs text-gray-500 dark:text-gray-400">
                                         <span>{formatBytes(receivedBlob.size)}</span>
                                         {mimeType && <><span>•</span><span className="truncate">{mimeType}</span></>}
-                                        {sender?.username && (
-                                            <>
-                                                <span>•</span>
-                                                <span className="flex items-center space-x-1">
-                                                    <span>from</span>
-                                                    <span>{sender.emoji || '👤'}</span>
-                                                    <span className="font-medium">{sender.username}</span>
-                                                </span>
-                                            </>
-                                        )}
+                                        <span>•</span>
+                                        <span className="flex items-center space-x-1">
+                                            <span>from</span>
+                                            <span>{senderEmoji}</span>
+                                            <span className="font-medium">{senderName}</span>
+                                        </span>
                                     </div>
                                 </div>
                             </div>
@@ -200,7 +200,7 @@ const ReceiveFileView = () => {
                         </div>
 
                         <div className="p-6 bg-gray-50 dark:bg-slate-900 min-h-[60vh] flex items-center justify-center">
-                            {!canPreview && (
+                            {!mimeType && (
                                 <div className="text-center max-w-md">
                                     <FileText className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                                     <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
@@ -218,23 +218,23 @@ const ReceiveFileView = () => {
                                     </button>
                                 </div>
                             )}
-                            {isImage && blobUrl && (
+                            {mimeType.startsWith('image/') && blobUrl && (
                                 <img src={blobUrl} alt={fileName} className="max-w-full max-h-[75vh] object-contain rounded-lg shadow-lg" />
                             )}
-                            {isVideo && blobUrl && (
+                            {mimeType.startsWith('video/') && blobUrl && (
                                 <video src={blobUrl} controls autoPlay className="max-w-full max-h-[75vh] rounded-lg shadow-lg bg-black">
                                     Your browser does not support the video tag.
                                 </video>
                             )}
-                            {isAudio && blobUrl && (
+                            {mimeType.startsWith('audio/') && blobUrl && (
                                 <div className="w-full max-w-xl bg-white dark:bg-slate-800 rounded-xl p-6 shadow-lg">
                                     <audio src={blobUrl} controls className="w-full" />
                                 </div>
                             )}
-                            {isPDF && blobUrl && (
+                            {mimeType === 'application/pdf' && blobUrl && (
                                 <iframe src={blobUrl} title={fileName} className="w-full h-[75vh] rounded-lg shadow-lg bg-white" />
                             )}
-                            {isText && (
+                            {(mimeType.startsWith('text/') || mimeType === 'application/json' || mimeType === 'application/javascript') && (
                                 <pre className="w-full max-h-[75vh] overflow-auto bg-white dark:bg-slate-800 p-4 rounded-lg shadow-inner text-sm text-gray-800 dark:text-gray-200 font-mono whitespace-pre-wrap">
                                     {textContent ?? 'Loading...'}
                                 </pre>
@@ -248,8 +248,8 @@ const ReceiveFileView = () => {
 
     return (
         <div className="min-h-screen bg-gray-50 dark:bg-slate-900 flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl max-w-md w-full p-8 text-center">
-                <div className="mb-6 flex justify-center">
+            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl max-w-lg w-full p-8 text-center">
+                <div className="mb-4 flex justify-center">
                     <div className="p-4 bg-blue-100 dark:bg-blue-900/30 rounded-full">
                         <Wifi className="w-8 h-8 text-blue-600 dark:text-blue-400" />
                     </div>
@@ -258,24 +258,25 @@ const ReceiveFileView = () => {
                 <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
                     Receive File
                 </h1>
-                <p className="text-gray-500 dark:text-gray-400 mb-6">
+                <p className="text-gray-500 dark:text-gray-400 mb-4">
                     Direct P2P transfer
                 </p>
 
-                {sender?.username && (
-                    <div className="mb-6 flex items-center justify-center space-x-2 text-sm text-gray-700 dark:text-gray-300">
-                        <span>From</span>
-                        <span className="text-xl">{sender.emoji || '👤'}</span>
-                        <span className="font-medium">{sender.username}</span>
-                    </div>
-                )}
+                <div className="mb-4 flex items-center justify-center space-x-2 text-sm text-gray-700 dark:text-gray-300">
+                    <span>From</span>
+                    <span className="text-xl">{senderEmoji}</span>
+                    <span className="font-medium">{senderName}</span>
+                </div>
 
-                <div className="bg-gray-50 dark:bg-slate-700/50 rounded-xl p-4 mb-8 border border-gray-100 dark:border-slate-700">
+                <div className="bg-gray-50 dark:bg-slate-700/50 rounded-xl p-4 mb-6 border border-gray-100 dark:border-slate-700">
+                    {thumb && (
+                        <img src={thumb} alt="Preview" className="w-full h-32 object-contain rounded-lg mb-3" />
+                    )}
                     <div className="flex items-center space-x-3 text-left">
                         <FileText className="w-10 h-10 text-gray-400" />
                         <div className="flex-1 min-w-0">
                             <p className="font-medium text-gray-900 dark:text-white truncate">
-                                {fileInfo?.name || fileName}
+                                {fileName}
                             </p>
                             {fileSize && (
                                 <p className="text-xs text-gray-500">
@@ -315,7 +316,7 @@ const ReceiveFileView = () => {
                     {status === 'idle' || status === 'error' ? (
                         <>
                             <Download className="w-5 h-5" />
-                            <span>Start Download</span>
+                            <span>Accept & Download</span>
                         </>
                     ) : (
                         <>

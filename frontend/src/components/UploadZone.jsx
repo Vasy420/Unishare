@@ -40,7 +40,7 @@ const UploadZone = ({ onFileSelect, uploading, disabled }) => {
 
   return (
     <div
-      className={`relative border-2 border-dashed rounded-xl p-8 text-center transition-all duration-200 ${
+      className={`relative border-2 border-dashed rounded-xl p-4 sm:p-8 text-center transition-all duration-200 touch-manipulation ${
         dragActive
           ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
           : 'border-gray-300 dark:border-gray-600 hover:border-blue-400 dark:hover:border-blue-500'
@@ -61,19 +61,19 @@ const UploadZone = ({ onFileSelect, uploading, disabled }) => {
         disabled={disabled || uploading}
       />
 
-      <div className="flex flex-col items-center space-y-3">
-        <div className={`p-4 rounded-full ${
+      <div className="flex flex-col items-center space-y-2 sm:space-y-3">
+        <div className={`p-3 sm:p-4 rounded-full ${
           dragActive ? 'bg-blue-100 dark:bg-blue-900/50' : 'bg-gray-100 dark:bg-gray-800'
         } transition-colors`}>
-          <Upload className={`w-8 h-8 ${
+          <Upload className={`w-6 h-6 sm:w-8 sm:h-8 ${
             dragActive ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400 dark:text-gray-500'
           }`} />
         </div>
         <div>
-          <p className="text-base font-medium text-gray-700 dark:text-gray-300">
-            {uploading ? 'Uploading...' : dragActive ? 'Drop your file here' : 'Drop file or click to upload'}
+          <p className="text-sm sm:text-base font-medium text-gray-700 dark:text-gray-300">
+            {uploading ? 'Uploading...' : dragActive ? 'Drop your file here' : 'Tap to upload'}
           </p>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+          <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1">
             Any file type supported
           </p>
         </div>

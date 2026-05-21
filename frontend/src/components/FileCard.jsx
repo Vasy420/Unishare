@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { Download, Trash2, Share2, File, HardDrive, CloudUpload, Eye, Heart } from 'lucide-react';
+import { getApiUrl } from '../utils/backendUrl';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
-const API = `${BACKEND_URL}/api`;
+const API = getApiUrl();
 
 const formatFileSize = (bytes) => {
   if (bytes === 0) return '0 Bytes';

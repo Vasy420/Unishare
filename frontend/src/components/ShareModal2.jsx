@@ -18,11 +18,15 @@ const ShareModal2 = ({ isOpen, onClose, file, backendUrl }) => {
 
   useEffect(() => {
     if (isOpen) {
-      const filterAdmins = (users) => (users || []).filter((u) => !u.is_admin);
-      webrtcManager.onOnlineUsersChange = (users) => {
-        setOnlineUsers(filterAdmins(users));
+      const filterUsers = (users) => (users || []).filter((u) => !u.is_admin);
+      const handler = (users) => setOnlineUsers(filterUsers(users));
+      webrtcManager.onOnlineUsersChange = handler;
+      setOnlineUsers(filterUsers(webrtcManager.onlineUsers));
+      return () => {
+        if (webrtcManager.onOnlineUsersChange === handler) {
+          webrtcManager.onOnlineUsersChange = null;
+        }
       };
-      setOnlineUsers(filterAdmins(webrtcManager.onlineUsers));
     }
   }, [isOpen]);
 

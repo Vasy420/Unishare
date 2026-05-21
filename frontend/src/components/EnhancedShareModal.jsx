@@ -22,8 +22,19 @@ import { Copy, CheckCircle, Download, QrCode, Bluetooth, Wifi, Users, Lock, Glob
 import webrtcManager from "@/utils/webrtcManager";
 import bluetoothManager from "@/utils/bluetoothManager";
 import axios from "axios";
+import { getBackendUrl } from "../utils/backendUrl";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const getBackendUrl2 = () => {
+  const envBackend = process.env.REACT_APP_BACKEND_URL;
+  if (envBackend) return envBackend;
+  const protocol = window.location.protocol;
+  const hostname = window.location.hostname;
+  const port = window.location.port;
+  const backendPort = port === '3001' ? '8001' : String(parseInt(port) + 5000);
+  return `${protocol}//${hostname}:${backendPort}`;
+};
+
+const BACKEND_URL = getBackendUrl2();
 
 const EnhancedShareModal = ({ isOpen, onClose, file, shareUrl, currentUser, allUsers }) => {
   const [copied, setCopied] = useState(false);
@@ -53,7 +64,11 @@ const EnhancedShareModal = ({ isOpen, onClose, file, shareUrl, currentUser, allU
   const fetchOnlineUsers = async () => {
     try {
       const response = await axios.get(`${BACKEND_URL}/api/online-users`);
-      setOnlineUsers(response.data.users.filter(u => u !== currentUser?.id));
+      let users = response.data.users.filter(u => u !== currentUser?.id);
+      if (!currentUser?.is_admin) {
+        users = users.filter(u => !u.is_admin);
+      }
+      setOnlineUsers(users);
     } catch (error) {
       console.error("Error fetching online users:", error);
     }

@@ -40,7 +40,7 @@ const WelcomeScreen = ({ onGetStarted }) => {
 
   return (
     <>
-      <div className="dark fixed inset-0 overflow-hidden text-white">
+      <div className="dark min-h-screen text-white welcome-scroll">
         {/* AmbientBackground is rendered once at the App level */}
 
         {/* Main content */}
@@ -135,6 +135,26 @@ const WelcomeScreen = ({ onGetStarted }) => {
         .welcome-stagger {
           opacity: 0;
           animation: welcomeStaggerIn 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        @media (max-width: 640px), (max-height: 700px) {
+          .welcome-scroll {
+            height: 100%;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(148, 163, 184, 0.7) transparent;
+          }
+          .welcome-scroll::-webkit-scrollbar {
+            width: 6px;
+          }
+          .welcome-scroll::-webkit-scrollbar-track {
+            background: transparent;
+          }
+          .welcome-scroll::-webkit-scrollbar-thumb {
+            background: rgba(148, 163, 184, 0.7);
+            border-radius: 999px;
+          }
         }
 
         @keyframes zip {

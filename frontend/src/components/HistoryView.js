@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { History, Upload, Download, Eye, Clock, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
+import { getApiUrl } from '../utils/backendUrl';
+
+const API = getApiUrl();
 
 const HistoryView = ({ token }) => {
     const [history, setHistory] = useState([]);
@@ -14,7 +17,7 @@ const HistoryView = ({ token }) => {
     const fetchHistory = async () => {
         try {
             setLoading(true);
-            const response = await axios.get(`${process.env.REACT_APP_BACKEND_URL}/api/history`, {
+            const response = await axios.get(`${API}/history`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setHistory(response.data);

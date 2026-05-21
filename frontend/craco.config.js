@@ -30,6 +30,11 @@ if (config.enableHealthCheck) {
 }
 
 const webpackConfig = {
+  devServer: {
+    host: '0.0.0.0',
+    port: 3001,
+    allowedHosts: 'all',
+  },
   webpack: {
     alias: {
       '@': path.resolve(__dirname, 'src'),

@@ -3,9 +3,10 @@ import axios from 'axios';
 import { Shield, Trash2, Ban, CheckCircle, RefreshCw, AlertTriangle, VolumeX, Volume2, Pencil, X, Check } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import { toastError, toastSuccess } from '../utils/toast';
+import webrtcManager from '../utils/webrtcManager2';
+import { getApiUrl } from '../utils/backendUrl';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
-const API = `${BACKEND_URL}/api`;
+const API = getApiUrl();
 
 function formatBytes(n) {
   if (!n) return '0 B';
@@ -94,6 +95,19 @@ const AdminView = ({ token, currentUser }) => {
 
   useEffect(() => {
     fetchAll();
+  }, [fetchAll]);
+
+  useEffect(() => {
+    const handler = (event) => {
+      if (event.type === 'auto_unmuted') {
+        fetchAll();
+      }
+    };
+    const prior = webrtcManager.onChatEvent;
+    webrtcManager.onChatEvent = handler;
+    return () => {
+      webrtcManager.onChatEvent = prior;
+    };
   }, [fetchAll]);
 
   const deleteFile = (file) =>
@@ -355,9 +369,13 @@ const AdminView = ({ token, currentUser }) => {
                         <span className="px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300">
                           blocked
                         </span>
-                      ) : (
+                      ) : u.online ? (
                         <span className="px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
-                          active
+                          online
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
+                          offline
                         </span>
                       )}
                     </td>

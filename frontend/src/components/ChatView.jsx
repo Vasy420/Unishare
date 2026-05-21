@@ -7,7 +7,16 @@ import { toastError, toastSuccess } from '../utils/toast';
 
 const CHAT_BC_NAME = 'unishare-chat-v1';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
+const envBackend = process.env.REACT_APP_BACKEND_URL || '';
+const getBackendUrl = () => {
+  if (envBackend) return envBackend;
+  const protocol = window.location.protocol;
+  const hostname = window.location.hostname;
+  const port = window.location.port;
+  const backendPort = port === '3001' ? '8001' : String(parseInt(port) + 5000);
+  return `${protocol}//${hostname}:${backendPort}`;
+};
+const BACKEND_URL = getBackendUrl();
 const API = `${BACKEND_URL}/api`;
 const REACTION_PALETTE = ['👍', '❤️', '😂', '😮', '😢', '🎉'];
 
@@ -90,6 +99,55 @@ const ChatView = ({ token, currentUser }) => {
     return () => { cancelled = true; };
   }, [authHeaders, scrollToBottom]);
 
+  useEffect(() => {
+    const fetchMuteStatus = async () => {
+      try {
+        const r = await axios.get(`${API}/auth/me`, { headers: authHeaders });
+        if (r.data && r.data.muted_until) {
+          setMutedUntil(r.data.muted_until);
+        } else {
+          setMutedUntil(null);
+        }
+      } catch (e) {
+        console.error('Failed to fetch mute status:', e);
+      }
+    };
+    fetchMuteStatus();
+}, [authHeaders]);
+
+  useEffect(() => {
+    const fetchMuteStatus = async () => {
+      try {
+        const r = await axios.get(`${API}/auth/me`, { headers: authHeaders });
+        if (r.data && r.data.muted_until) {
+          setMutedUntil(r.data.muted_until);
+        } else {
+          setMutedUntil(null);
+        }
+      } catch (e) {
+        console.error('Failed to fetch mute status:', e);
+      }
+    };
+    fetchMuteStatus();
+    const interval = setInterval(fetchMuteStatus, 30000);
+    return () => clearInterval(interval);
+  }, [authHeaders]);
+
+  useEffect(() => {
+    if (mutedUntil) {
+      const checkMuteExpiry = () => {
+        const now = new Date();
+        const until = new Date(mutedUntil);
+        if (now >= until) {
+          setMutedUntil(null);
+        }
+      };
+      checkMuteExpiry();
+      const interval = setInterval(checkMuteExpiry, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [mutedUntil]);
+
   // Track online/offline status of the browser itself
   useEffect(() => {
     const goOnline = () => setIsOffline(false);
@@ -124,8 +182,8 @@ const ChatView = ({ token, currentUser }) => {
   // Online users feed from the existing WebRTC signaling WS
   useEffect(() => {
     const onlineHandler = (users) => {
-      const ids = new Set((users || []).map((u) => u.id));
-      if (currentUser) ids.add(currentUser.id);
+      const ids = new Set((users || []).filter(u => !u.is_admin).map((u) => u.id));
+      if (currentUser && !currentUser.is_admin) ids.add(currentUser.id);
       setOnlineIds(ids);
     };
     const priorOnline = webrtcManager.onOnlineUsersChange;
@@ -198,6 +256,9 @@ const ChatView = ({ token, currentUser }) => {
         if (currentUser && event.user_id === currentUser.id) {
           setMutedUntil(event.muted_until);
         }
+      } else if (event.type === 'auto_unmuted') {
+        console.log('auto_unmuted event received, clearing mute');
+        setMutedUntil(null);
       }
     };
     const prior = webrtcManager.onChatEvent;
@@ -393,10 +454,15 @@ const ChatView = ({ token, currentUser }) => {
         online: true,
       });
     }
-    // Hide admins from everyone else's online list (admin still sees themselves).
-    return Array.from(out.values()).filter(
-      (u) => !u.is_admin || (currentUser && u.id === currentUser.id)
-    );
+    // Hide admins from regular users; admins can see everyone.
+    // Guests (is_guest: true) are always visible to everyone.
+    return Array.from(out.values()).filter((u) => {
+      // Admins can see everyone
+      if (currentUser && currentUser.is_admin) return true;
+      // Regular users: hide admins, show everyone else (including guests)
+      if (u.is_admin === true) return false;
+      return true;
+    });
   }, [onlineIds, dirById, currentUser]);
 
   const Sidebar = (
@@ -432,7 +498,7 @@ const ChatView = ({ token, currentUser }) => {
   );
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-4 h-[calc(100vh-8rem)] flex space-x-4">
+    <div className="max-w-6xl mx-auto px-2 sm:px-4 py-2 sm:py-4 h-[calc(100vh-8rem)] flex space-x-2 sm:space-x-4 overflow-hidden max-w-full">
       <div className="flex-1 flex flex-col min-w-0">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center space-x-2">

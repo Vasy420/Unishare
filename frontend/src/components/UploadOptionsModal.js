@@ -3,11 +3,13 @@ import { Upload, X, Users, Globe, Lock, Share2, FileText, QrCode, Link as LinkIc
 import { QRCodeSVG } from 'qrcode.react';
 import webrtcManager from '../utils/webrtcManager2';
 import { isOfflineMode } from '../utils/offline';
+import { useAuth } from '../contexts/AuthContext';
 
 const CLOUD_UPLOAD_MAX_BYTES = 100 * 1024 * 1024; // keep in sync with App.js
 const CLOUD_UPLOAD_MAX_LABEL = '100 MB';
 
 const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
+    const { user } = useAuth();
     const isDriveFile = file?.source === 'google_drive' || !!file?.webViewLink;
     const exceedsCloudCap = !!file && !isDriveFile && file.size > CLOUD_UPLOAD_MAX_BYTES;
     const [activeTab, setActiveTab] = useState(isDriveFile ? 'upload' : 'share'); // Default to upload for Drive files
@@ -47,23 +49,48 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
             } else if (!isDriveFile) {
                 const fileId = webrtcManager.hostFile(file);
                 const userId = webrtcManager.userId;
+                const username = user?.username || 'Someone';
+                const emoji = user?.emoji || '👤';
+
                 if (userId) {
-                    const link = `${window.location.origin}/receive?peer=${userId}&file=${fileId}&name=${encodeURIComponent(file.name)}&size=${file.size}`;
+                    const link = `${window.location.origin}/receive?peer=${userId}&file=${fileId}&name=${encodeURIComponent(file.name)}&size=${file.size}&from=${encodeURIComponent(username)}&emoji=${encodeURIComponent(emoji)}`;
                     setP2pLink(link);
+                }
+
+                if (/\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(file.name) && file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            const canvas = document.createElement('canvas');
+                            const maxSize = 80;
+                            const scale = Math.min(maxSize / img.width, maxSize / img.height);
+                            canvas.width = Math.round(img.width * scale);
+                            canvas.height = Math.round(img.height * scale);
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                            const thumb = canvas.toDataURL('image/jpeg', 0.4);
+                            if (userId) {
+                                const link = `${window.location.origin}/receive?peer=${userId}&file=${fileId}&name=${encodeURIComponent(file.name)}&size=${file.size}&from=${encodeURIComponent(username)}&emoji=${encodeURIComponent(emoji)}&thumb=${encodeURIComponent(thumb)}`;
+                                setP2pLink(link);
+                            }
+                        };
+                        img.src = e.target.result;
+                    };
+                    reader.readAsDataURL(file);
                 }
             }
 
             // Get online users (only relevant for P2P) — exclude admins from the visible list.
             if (!isDriveFile) {
-                const filterAdmins = (users) => (users || []).filter((u) => !u.is_admin);
-                setOnlineUsers(filterAdmins(webrtcManager.onlineUsers));
-                const originalHandler = webrtcManager.onOnlineUsersChange;
-                webrtcManager.onOnlineUsersChange = (users) => {
-                    setOnlineUsers(filterAdmins(users));
-                    if (originalHandler) originalHandler(users);
-                };
+                const filterUsers = (users) => (users || []).filter((u) => !u.is_admin);
+                const handler = (users) => setOnlineUsers(filterUsers(users));
+                webrtcManager.onOnlineUsersChange = handler;
+                setOnlineUsers(filterUsers(webrtcManager.onlineUsers));
                 return () => {
-                    webrtcManager.onOnlineUsersChange = originalHandler;
+                    if (webrtcManager.onOnlineUsersChange === handler) {
+                        webrtcManager.onOnlineUsersChange = null;
+                    }
                 };
             }
         }
@@ -153,13 +180,82 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
 
                     {activeTab === 'share' && (
                         <div className="space-y-6 animate-in slide-in-from-left-4 fade-in duration-300">
-                            {isOfflineMode() && !isDriveFile && (
-                                <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
-                                    <p className="text-xs text-yellow-700 dark:text-yellow-300">
-                                        Offline mode is enabled. Keep this tab open and open the receive link in another tab to transfer locally.
+                            
+
+                            {/* Send to Local Users - now at top */}
+                            {!isDriveFile && (
+                                <div>
+                                    <h4 className="flex items-center space-x-2 text-sm font-semibold text-gray-900 dark:text-white mb-2">
+                                        <Wifi className="w-4 h-4 text-green-500" />
+                                        <span>Send to Local Users</span>
+                                    </h4>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                                        Direct transfer without internet. Fast and private.
                                     </p>
+                                    {onlineUsers.length > 0 ? (
+                                        <div className="grid gap-2 max-h-40 overflow-y-auto">
+                                            {onlineUsers.map(user => (
+                                                <div key={user.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-700/50 rounded-lg border border-gray-200 dark:border-slate-700">
+                                                    <div className="flex items-center space-x-3">
+                                                        <span className="text-xl">{user.emoji || '👤'}</span>
+                                                        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{user.username}</span>
+                                                    </div>
+                                                      <button
+                                                          onClick={async () => {
+                                                              const uid = user.id;
+                                                              try {
+                                                                  setStatusForPeer(uid, 'Connecting...', 'pending');
+                                                                  if (!webrtcManager.canSendViaBroadcast(uid)) {
+                                                                      const dc = webrtcManager.dataChannels.get(uid);
+                                                                      if (!dc || dc.readyState !== 'open') {
+                                                                          if (dc) webrtcManager.closePeerConnection(uid);
+                                                                          await webrtcManager.initiateConnection(uid);
+                                                                          await webrtcManager.waitForDataChannelOpen(uid, 15000);
+                                                                      }
+                                                                  }
+                                                                  setStatusForPeer(uid, 'Sending...', 'pending');
+                                                                  await webrtcManager.sendFile(uid, file, (update) => {
+                                                                      if (update?.type === 'accepted') {
+                                                                          setStatusForPeer(uid, 'Sending...', 'pending');
+                                                                      } else if (update?.progress !== undefined) {
+                                                                          setStatusForPeer(uid, `${update.progress}%`, 'pending');
+                                                                      }
+                                                                  });
+                                                                  setStatusForPeer(uid, 'Sent', 'success', 3000);
+                                                              } catch (e) {
+                                                                  const msg = (e.message || '').toLowerCase();
+                                                                  if (msg.includes('declined')) {
+                                                                      setStatusForPeer(uid, 'Declined', 'error', 4000);
+                                                                  } else if (msg.includes('did not respond')) {
+                                                                      setStatusForPeer(uid, 'No response', 'error', 4000);
+                                                                  } else {
+                                                                      setStatusForPeer(uid, 'Failed', 'error', 4000);
+                                                                      console.error('Send failed:', e);
+                                                                  }
+                                                              }
+                                                          }}
+                                                          disabled={peerStatus[user.id]?.kind === 'pending'}
+                                                          className={`px-3 py-1 text-white text-xs font-medium rounded-lg min-w-[80px] ${
+                                                              peerStatus[user.id]?.kind === 'success'
+                                                                  ? 'bg-emerald-600'
+                                                                  : peerStatus[user.id]?.kind === 'error'
+                                                                  ? 'bg-red-600'
+                                                                  : peerStatus[user.id]?.kind === 'pending'
+                                                                  ? 'bg-blue-500 cursor-not-allowed'
+                                                                  : 'bg-green-600 hover:bg-green-700'
+                                                          }`}
+                                                      >
+                                                         {peerStatus[user.id]?.label || 'Send'}
+                                                     </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <p className="text-sm text-center text-gray-500 p-4 bg-gray-50 dark:bg-slate-700/30 rounded-lg">No other users online</p>
+                                    )}
                                 </div>
                             )}
+
                             {/* Link Section */}
                             <div>
                                 <h4 className="flex items-center space-x-2 text-sm font-semibold text-gray-900 dark:text-white mb-3">
@@ -214,77 +310,7 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                                 </div>
                             )}
 
-                            {/* P2P Online Users (Hide for Drive files) */}
-                            {!isDriveFile && (
-                                <div>
-                                    <h4 className="flex items-center space-x-2 text-sm font-semibold text-gray-900 dark:text-white mb-3">
-                                        <Wifi className="w-4 h-4 text-green-500" />
-                                        <span>Send Directly to Online Users</span>
-                                    </h4>
-                                    {onlineUsers.length > 0 ? (
-                                        <div className="grid gap-2 max-h-40 overflow-y-auto">
-                                            {onlineUsers.map(user => (
-                                                <div key={user.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-700/50 rounded-lg border border-gray-200 dark:border-slate-700">
-                                                    <div className="flex items-center space-x-3">
-                                                        <span className="text-xl">{user.emoji || '👤'}</span>
-                                                        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{user.username}</span>
-                                                    </div>
-                                                      <button
-                                                          onClick={async () => {
-                                                              const uid = user.id;
-                                                              try {
-                                                                  setStatusForPeer(uid, 'Connecting...', 'pending');
-                                                                  // Same-browser tabs: skip WebRTC, BroadcastChannel handles transfer
-                                                                  if (!webrtcManager.canSendViaBroadcast(uid)) {
-                                                                      const dc = webrtcManager.dataChannels.get(uid);
-                                                                      if (!dc || dc.readyState !== 'open') {
-                                                                          if (dc) webrtcManager.closePeerConnection(uid);
-                                                                          await webrtcManager.initiateConnection(uid);
-                                                                          await webrtcManager.waitForDataChannelOpen(uid, 15000);
-                                                                      }
-                                                                  }
-                                                                  setStatusForPeer(uid, 'Sending...', 'pending');
-                                                                  await webrtcManager.sendFile(uid, file, (update) => {
-                                                                      if (update?.type === 'accepted') {
-                                                                          setStatusForPeer(uid, 'Sending...', 'pending');
-                                                                      } else if (update?.progress !== undefined) {
-                                                                          setStatusForPeer(uid, `${update.progress}%`, 'pending');
-                                                                      }
-                                                                  });
-                                                                  setStatusForPeer(uid, 'Sent', 'success', 3000);
-                                                              } catch (e) {
-                                                                  const msg = (e.message || '').toLowerCase();
-                                                                  if (msg.includes('declined')) {
-                                                                      setStatusForPeer(uid, 'Declined', 'error', 4000);
-                                                                  } else if (msg.includes('did not respond')) {
-                                                                      setStatusForPeer(uid, 'No response', 'error', 4000);
-                                                                  } else {
-                                                                      setStatusForPeer(uid, 'Failed', 'error', 4000);
-                                                                      console.error('Send failed:', e);
-                                                                  }
-                                                              }
-                                                          }}
-                                                          disabled={peerStatus[user.id]?.kind === 'pending'}
-                                                          className={`px-3 py-1 text-white text-xs font-medium rounded-lg min-w-[80px] ${
-                                                              peerStatus[user.id]?.kind === 'success'
-                                                                  ? 'bg-emerald-600'
-                                                                  : peerStatus[user.id]?.kind === 'error'
-                                                                  ? 'bg-red-600'
-                                                                  : peerStatus[user.id]?.kind === 'pending'
-                                                                  ? 'bg-blue-500 cursor-not-allowed'
-                                                                  : 'bg-green-600 hover:bg-green-700'
-                                                          }`}
-                                                      >
-                                                         {peerStatus[user.id]?.label || 'Send'}
-                                                     </button>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <p className="text-sm text-center text-gray-500 p-4 bg-gray-50 dark:bg-slate-700/30 rounded-lg">No other users online</p>
-                                    )}
-                                </div>
-                            )}
+                            
                         </div>
                     )}
 

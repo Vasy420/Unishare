@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { HardDrive, Loader, X, ExternalLink } from 'lucide-react';
 import axios from 'axios';
 import { isOfflineMode } from '../utils/offline';
+import { getApiUrl } from '../utils/backendUrl';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
-const API = `${BACKEND_URL}/api`;
+const API = getApiUrl();
 
 const GoogleDrivePicker = ({ isOpen, onClose, onFileShared, token }) => {
   const [driveFiles, setDriveFiles] = useState([]);

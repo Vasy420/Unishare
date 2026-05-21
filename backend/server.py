@@ -28,6 +28,7 @@ import io
 import json
 import requests
 import time
+import re
 import bcrypt
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization, hashes
@@ -181,12 +182,14 @@ async def lifespan(app: FastAPI):
 
     # Background: message TTL sweep (2 hours for ALL messages)
     ttl_task = asyncio.create_task(_all_msg_ttl_loop())
+    unmute_task = asyncio.create_task(_auto_unmute_loop())
 
     yield
 
     # Shutdown
     try:
         ttl_task.cancel()
+        unmute_task.cancel()
         for t in list(guest_msg_cleanup_tasks.values()):
             t.cancel()
         client.close()
@@ -287,6 +290,32 @@ async def _all_msg_ttl_loop():
             logger.error(f"TTL loop error: {e}")
 
 
+UNMUTE_CHECK_INTERVAL = 30
+
+async def _auto_unmute_loop():
+    """Background loop: auto-unmute users when their mute period expires."""
+    while True:
+        try:
+            await asyncio.sleep(UNMUTE_CHECK_INTERVAL)
+            now = datetime.now(timezone.utc)
+            now_iso = now.isoformat()
+            result = await db.users.update_many(
+                {"muted_until": {"$ne": None, "$lte": now_iso}},
+                {"$set": {"muted_until": None}}
+            )
+            if result.modified_count > 0:
+                logger.info(f"Auto-unmuted {result.modified_count} user(s)")
+                await manager.broadcast_all({
+                    "type": "auto_unmuted",
+                    "user_count": result.modified_count
+                })
+                await manager.broadcast_online_users()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Auto-unmute loop error: {e}")
+
+
 
 # ============================================================================
 # WebSocket Connection Manager for WebRTC Signaling
@@ -325,10 +354,15 @@ class ConnectionManager:
     
     async def broadcast_online_users(self):
         """Notify all connected users about who's online"""
-        online_users = [
-            {"id": uid, **info}
-            for uid, info in self.user_info.items()
-        ]
+        online_users = []
+        for uid, info in self.user_info.items():
+            user_doc = await db.users.find_one({"id": uid}, {"_id": 0, "is_admin": 1})
+            is_admin = user_doc.get("is_admin", False) if user_doc else False
+            online_users.append({
+                "id": uid,
+                **info,
+                "is_admin": is_admin
+            })
         message = {"type": "online_users", "users": online_users}
         for user_id in list(self.active_connections.keys()):
             await self.send_message(user_id, message)
@@ -396,6 +430,7 @@ class UserResponse(BaseModel):
     total_data_shared: int
     google_drive_connected: bool
     created_date: str
+    muted_until: Optional[str] = None
 
 class Token(BaseModel):
     access_token: str
@@ -684,6 +719,28 @@ async def log_history(user_id: str, action: str, file_name: str, file_id: str = 
         logger.error(f"Failed to log history: {e}")
         # Don't raise exception - history logging shouldn't break the main flow
 
+
+async def ensure_username_available(username: str, exclude_user_id: Optional[str] = None) -> str:
+    """Normalize + enforce unique username across guests and registered users."""
+    normalized = (username or "").strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Username is required")
+
+    query = {
+        "username": {
+            "$regex": f"^{re.escape(normalized)}$",
+            "$options": "i",
+        }
+    }
+    if exclude_user_id:
+        query["id"] = {"$ne": exclude_user_id}
+
+    existing = await db.users.find_one(query, {"_id": 0, "id": 1})
+    if existing:
+        raise HTTPException(status_code=409, detail="Username already taken")
+
+    return normalized
+
 # ============================================================================
 # Authentication Routes
 # ============================================================================
@@ -693,9 +750,11 @@ async def log_history(user_id: str, action: str, file_name: str, file_id: str = 
 async def create_guest(request: Request, guest: GuestCreate):
     """Create a guest user with username and emoji - Rate limited to 10 per minute"""
     try:
+        username = await ensure_username_available(guest.username)
+
         # Create guest user
         user = User(
-            username=guest.username,
+            username=username,
             emoji=guest.emoji,
             is_guest=True
         )
@@ -723,6 +782,9 @@ async def create_guest(request: Request, guest: GuestCreate):
         )
         
         return Token(access_token=access_token, token_type="bearer", user=user_response)
+
+    except HTTPException:
+        raise
     
     except Exception as e:
         logger.error(f"Guest creation failed: {e}")
@@ -737,10 +799,12 @@ async def register(request: Request, user_create: UserCreate):
         existing_user = await db.users.find_one({"email": user_create.email})
         if existing_user:
             raise HTTPException(status_code=400, detail="Email already registered")
+
+        username = await ensure_username_available(user_create.username)
         
         # Create user
         user = User(
-            username=user_create.username,
+            username=username,
             email=user_create.email,
             password_hash=hash_password(user_create.password),
             is_guest=False,
@@ -896,6 +960,10 @@ async def logout_beacon(token: Optional[str] = None):
 @api_router.get("/auth/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
     """Get current user info"""
+    user_doc = await db.users.find_one({"id": current_user.id}, {"_id": 0, "muted_until": 1})
+    muted_until = user_doc.get("muted_until") if user_doc else None
+    if isinstance(muted_until, datetime):
+        muted_until = muted_until.isoformat()
     return UserResponse(
         id=current_user.id,
         username=current_user.username,
@@ -907,7 +975,8 @@ async def get_me(current_user: User = Depends(get_current_user)):
         avatar_url=current_user.avatar_url,
         total_data_shared=current_user.total_data_shared,
         google_drive_connected=current_user.google_drive_connected,
-        created_date=current_user.created_date.isoformat()
+        created_date=current_user.created_date.isoformat(),
+        muted_until=muted_until
     )
 
 
@@ -924,6 +993,28 @@ async def update_avatar(payload: dict, current_user: User = Depends(get_current_
             raise HTTPException(status_code=400, detail="Only DiceBear avatar URLs are allowed")
     await db.users.update_one({"id": current_user.id}, {"$set": {"avatar_url": url or None}})
     return {"success": True, "avatar_url": url or None}
+
+
+@api_router.patch("/auth/me/username")
+async def update_my_username(payload: dict, current_user: User = Depends(get_current_user)):
+    """Let a registered user rename themselves. Guests cannot rename."""
+    if current_user.is_guest:
+        raise HTTPException(status_code=403, detail="Guests cannot rename")
+    new_name = (payload.get("username") or "").strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Username is required")
+    if len(new_name) < 2 or len(new_name) > 32:
+        raise HTTPException(status_code=400, detail="Username must be 2-32 characters")
+
+    new_name = await ensure_username_available(new_name, exclude_user_id=current_user.id)
+    await db.users.update_one({"id": current_user.id}, {"$set": {"username": new_name}})
+    await db.chat_messages.update_many({"user_id": current_user.id}, {"$set": {"username": new_name}})
+
+    if current_user.id in manager.user_info:
+        manager.user_info[current_user.id]["username"] = new_name
+        await manager.broadcast_online_users()
+
+    return {"success": True, "username": new_name}
 
 # ============================================================================
 # Admin Endpoints
@@ -971,8 +1062,11 @@ def _serialize_file_doc(doc: dict) -> dict:
 @api_router.get("/admin/users")
 async def admin_list_users(admin: User = Depends(get_admin_user)):
     docs = []
+    online_ids = set(manager.user_info.keys())
     async for u in db.users.find({}, {"_id": 0, "password_hash": 0}):
-        docs.append(_serialize_user_doc(u))
+        user_data = _serialize_user_doc(u)
+        user_data["online"] = u.get("id") in online_ids
+        docs.append(user_data)
     return docs
 
 
@@ -1097,10 +1191,7 @@ async def admin_rename_user(user_id: str, payload: dict, admin: User = Depends(g
     if user_id == admin.id:
         raise HTTPException(status_code=400, detail="Cannot rename yourself here")
 
-    # Check uniqueness across users + currently-connected guest sessions
-    existing = await db.users.find_one({"username": new_name, "id": {"$ne": user_id}}, {"_id": 0, "id": 1})
-    if existing:
-        raise HTTPException(status_code=409, detail="Username already taken")
+    new_name = await ensure_username_available(new_name, exclude_user_id=user_id)
 
     db_user = await db.users.find_one({"id": user_id}, {"_id": 0})
     if db_user:
@@ -1591,10 +1682,18 @@ async def upload_file(
         doc = file_metadata.model_dump()
         doc['upload_date'] = doc['upload_date'].isoformat()
         await db.files.insert_one(doc)
-        
+
         # Update user's total data shared
         await update_user_data_shared(current_user.id, file_size)
-        
+
+        # Broadcast file update to all connected clients
+        await manager.broadcast_all({
+            "type": "file_uploaded",
+            "file_id": file_id,
+            "owner_id": current_user.id,
+            "owner_username": current_user.username
+        })
+
         # Log history
         await log_history(current_user.id, "upload", file.filename, file_id, f"Size: {file_size} bytes")
         
@@ -1754,10 +1853,17 @@ async def delete_file(file_id: str, current_user: User = Depends(get_current_use
         
         # Delete metadata from MongoDB
         await db.files.delete_one({"id": file_id})
-        
+
         # Update user's total data shared
         await update_user_data_shared(current_user.id, -file_doc['size'])
-        
+
+        # Broadcast file deletion to all connected clients
+        await manager.broadcast_all({
+            "type": "file_deleted",
+            "file_id": file_id,
+            "owner_id": current_user.id
+        })
+
         return {"message": "File deleted successfully", "file_id": file_id}
     
     except HTTPException:
@@ -1850,6 +1956,8 @@ async def websocket_endpoint(
 ):
     """WebSocket endpoint for WebRTC signaling"""
     await manager.connect(user_id, websocket, username, emoji)
+    # User came back online — cancel any pending guest message cleanup.
+    cancel_guest_msg_cleanup(user_id)
     # User came back online — cancel any pending guest message cleanup.
     cancel_guest_msg_cleanup(user_id)
 
@@ -2294,12 +2402,12 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # CORS middleware - Configure based on deployment
 # For production, replace "*" with your actual frontend domain
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", os.getenv("CORS_ORIGINS", "*")).split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS != ["*"] else ["*"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["X-Process-Time"],
     max_age=3600,

@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { X, Mail, Lock, User } from 'lucide-react';
 import axios from 'axios';
+import { getApiUrl } from '../utils/backendUrl';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
-const API = `${BACKEND_URL}/api`;
+const API = getApiUrl();
 
 const AuthModal = ({ isOpen, onClose, onSuccess, mode: initialMode = 'login' }) => {
   const [mode, setMode] = useState(initialMode);

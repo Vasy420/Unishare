@@ -15,6 +15,7 @@ class WebRTCManager {
     this.onFileOffered = null;
     this.onProgressUpdate = null;
     this.onChatEvent = null;
+    this.onFileUploaded = null; // Callback for file upload notifications
     this.pendingFiles = new Map(); // Files hosted for link-based pickup
     this.pendingSends = new Map(); // Files awaiting offer accept/decline
     this.receivingFiles = new Map(); // Files being received
@@ -67,14 +68,17 @@ class WebRTCManager {
     this.wsConnected = false;
 
     this.ws.onopen = () => {
-      console.log('WebSocket connected');
       this.wsConnected = true;
       this.reconnectAttempts = 0;
     };
 
     this.ws.onmessage = async (event) => {
-      const data = JSON.parse(event.data);
-      this.handleSignalPayload(data);
+      try {
+        const data = JSON.parse(event.data);
+        this.handleSignalPayload(data);
+      } catch (e) {
+        console.error('[WebRTC] Failed to parse message:', e);
+      }
     };
 
     this.ws.onerror = (error) => {
@@ -934,11 +938,32 @@ class WebRTCManager {
       case 'chat_pin':
       case 'chat_mute':
       case 'chat_clear':
+      case 'auto_unmuted':
         if (this.onChatEvent) {
           try {
             this.onChatEvent(data);
           } catch (e) {
             console.error('onChatEvent handler failed:', e);
+          }
+        }
+        break;
+
+      case 'file_uploaded':
+        if (this.onFileUploaded) {
+          try {
+            this.onFileUploaded(data);
+          } catch (e) {
+            console.error('onFileUploaded handler failed:', e);
+          }
+        }
+        break;
+
+      case 'file_deleted':
+        if (this.onFileUploaded) {
+          try {
+            this.onFileUploaded(data);
+          } catch (e) {
+            console.error('onFileUploaded handler failed:', e);
           }
         }
         break;

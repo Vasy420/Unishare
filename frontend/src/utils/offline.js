@@ -21,10 +21,9 @@ const isLocalHostname = (hostname) => {
 export const isOfflineMode = () => {
   if (process.env.REACT_APP_OFFLINE_MODE === 'true') return true;
   if (process.env.REACT_APP_OFFLINE_MODE === 'false') return false;
-  if (typeof window === 'undefined') return false;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
-  if (typeof window !== 'undefined' && window.__UNISHARE_OFFLINE__) return true;
-  return isLocalHostname(window.location.hostname);
+  if (typeof window !== 'undefined' && window.__UNISHARE_OFFLINE__ === true) return true;
+  return false;
 };
 
 export const getWebRtcIceServers = () => {

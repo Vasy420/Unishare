@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import axios from 'axios';
 import { X, Sparkles, Check } from 'lucide-react';
+import { getApiUrl } from '../utils/backendUrl';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
-const API = `${BACKEND_URL}/api`;
+const API = getApiUrl();
 
 const STYLES = [
   'adventurer',

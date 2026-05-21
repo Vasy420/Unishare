@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Mail, Lock, User, Upload as UploadIcon, ArrowRight, ArrowLeft } from 'lucide-react';
 import axios from 'axios';
+import { getApiUrl } from '../utils/backendUrl';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
-const API = `${BACKEND_URL}/api`;
+const API = getApiUrl();
 
 const LoginPage = ({ onSuccess, onGuestMode, onBack }) => {
   const [mode, setMode] = useState('login');

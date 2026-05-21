@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
 import { clearAuthToken, getAuthToken, setAuthToken } from '../utils/authStorage';
 import { isOfflineMode } from '../utils/offline';
+import { getApiUrl } from '../utils/backendUrl';
 
 const AuthContext = createContext();
 
@@ -13,8 +14,7 @@ export const useAuth = () => {
   return context;
 };
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
-const API = `${BACKEND_URL}/api`;
+const API = getApiUrl();
 
 function generateLocalToken() {
   return 'local-' + Math.random().toString(36).substring(2) + Date.now().toString(36);
@@ -86,7 +86,11 @@ export const AuthProvider = ({ children }) => {
       return { success: true, user: userData };
     } catch (error) {
       console.error('Guest login failed:', error);
-      if (isOfflineMode()) {
+      console.error('Error response:', error.response?.data);
+      console.error('Error status:', error.response?.status);
+      console.error('Is offline mode:', isOfflineMode());
+      const status = error.response?.status;
+      if (isOfflineMode() && (status === 0 || status === undefined || status === 429)) {
         const offlineToken = generateLocalToken();
         const offlineUser = createOfflineUser(username, emoji);
         setToken(offlineToken);

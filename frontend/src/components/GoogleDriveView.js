@@ -3,6 +3,9 @@ import axios from 'axios';
 import { HardDrive, Download, ExternalLink, Loader2, AlertTriangle, WifiOff, Plug } from 'lucide-react';
 import { isOfflineMode } from '../utils/offline';
 import { toastError, toastInfo } from '../utils/toast';
+import { getApiUrl } from '../utils/backendUrl';
+
+const API = getApiUrl();
 
 const GoogleDriveView = ({ token, user, onFileSelect }) => {
     const [files, setFiles] = useState([]);
@@ -26,7 +29,7 @@ const GoogleDriveView = ({ token, user, onFileSelect }) => {
     const fetchDriveFiles = async () => {
         try {
             setLoading(true);
-            const response = await axios.get(`${process.env.REACT_APP_BACKEND_URL}/api/drive/files`, {
+            const response = await axios.get(`${API}/drive/files`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setFiles(response.data);
@@ -53,7 +56,7 @@ const GoogleDriveView = ({ token, user, onFileSelect }) => {
         }
         setConnecting(true);
         try {
-            const response = await axios.get(`${process.env.REACT_APP_BACKEND_URL}/api/drive/connect`, {
+            const response = await axios.get(`${API}/drive/connect`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             window.location.href = response.data.authorization_url;

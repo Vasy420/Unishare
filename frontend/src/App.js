@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Routes, Route, useNavigate, useLocation, Link } from 'react-router-dom';
-import { Moon, Sun, LogOut, Upload as UploadIcon, HardDrive, History, LogIn, FileText, Menu, X, MessageCircle } from 'lucide-react';
+import { Moon, Sun, LogOut, Upload as UploadIcon, HardDrive, History, LogIn, FileText, Menu, X, MessageCircle, Pencil, Share2, Zap } from 'lucide-react';
 import { useTheme } from './contexts/ThemeContext';
 import { useAuth } from './contexts/AuthContext';
 import { setAuthToken } from './utils/authStorage';
@@ -24,14 +24,25 @@ import AdminView from './components/AdminView';
 import ConfirmModal from './components/ConfirmModal';
 import ChatView from './components/ChatView';
 import AvatarPickerModal from './components/AvatarPickerModal';
+import ProfileModal from './components/ProfileModal';
 import AmbientBackground from './components/AmbientBackground';
 import P2PReceivedPreviewModal from './components/P2PReceivedPreviewModal';
 import LoadingScreen from './components/LoadingScreen';
+import MobileDebugger from './components/MobileDebugger';
 import webrtcManager from './utils/webrtcManager2';
 import { isOfflineMode } from './utils/offline';
 import './App.css';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
+const envBackend = process.env.REACT_APP_BACKEND_URL || '';
+const getBackendUrl = () => {
+  if (envBackend) return envBackend;
+  const protocol = window.location.protocol;
+  const hostname = window.location.hostname;
+  const port = window.location.port;
+  const backendPort = port === '3001' ? '8001' : String(parseInt(port) + 5000);
+  return `${protocol}//${hostname}:${backendPort}`;
+};
+const BACKEND_URL = getBackendUrl();
 const API = `${BACKEND_URL}/api`;
 
 // Guest data limit (2GB in bytes)
@@ -60,6 +71,7 @@ function App() {
   const [dataLimitReached, setDataLimitReached] = useState(false);
   const [driveConfigured, setDriveConfigured] = useState(true);
   const [showWelcome, setShowWelcome] = useState(false);
+  const [guestLoginError, setGuestLoginError] = useState('');
   const [showLoading, setShowLoading] = useState(true);
   const [welcomeVisible, setWelcomeVisible] = useState(false);
   const [welcomeExiting, setWelcomeExiting] = useState(false);
@@ -95,10 +107,10 @@ function App() {
     if (user) {
       hadUserRef.current = true;
     }
-    if (!authLoading && !user && !hadUserRef.current) {
+    if (!authLoading && !user && !hadUserRef.current && !location.pathname.startsWith('/receive')) {
       setShowWelcome(true);
     }
-  }, [authLoading, user]);
+  }, [authLoading, user, location]);
 
   // Trigger welcome entrance animation once it mounts after loading screen exits
   useEffect(() => {
@@ -186,7 +198,11 @@ function App() {
   // Check auth and ask for guest username when needed
   // Skip if welcome is exiting to avoid interfering with the manual transition
   useEffect(() => {
-    if (!authLoading && !user && !showWelcome && !welcomeExiting && !location.pathname.startsWith('/receive')) {
+    if (!authLoading && !user && showWelcome && !welcomeExiting) {
+      setShowLoginPage(false);
+      return;
+    }
+    if (!authLoading && !user && !showWelcome && !welcomeExiting && hadUserRef.current && !location.pathname.startsWith('/receive')) {
       setShowLoginPage(true);
     }
   }, [authLoading, user, showWelcome, welcomeExiting, location]);
@@ -236,6 +252,10 @@ function App() {
           setDownloadProgress(null);
         }
       };
+
+      webrtcManager.onFileUploaded = () => {
+        fetchFiles();
+      };
     }
 
     return () => {
@@ -244,6 +264,24 @@ function App() {
       }
     };
   }, [user]);
+
+  useEffect(() => {
+    if (!user || !token) return;
+    const handler = (event) => {
+      if (event.type === 'auto_unmuted') {
+        axios.get(`${API}/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` }
+        }).then(response => {
+          setUser(response.data);
+        }).catch(console.error);
+      }
+    };
+    const prior = webrtcManager.onChatEvent;
+    webrtcManager.onChatEvent = handler;
+    return () => {
+      webrtcManager.onChatEvent = prior;
+    };
+  }, [user, token, setUser]);
 
   const fetchFiles = async () => {
     if (!user || !token) return;
@@ -258,11 +296,13 @@ function App() {
   };
 
   const handleGuestLogin = async (username, emoji) => {
+    setGuestLoginError('');
     const result = await loginAsGuest(username, emoji);
     if (result.success) {
       setShowGuestModal(false);
+      setGuestLoginError('');
     } else {
-      alert(result.error);
+      setGuestLoginError(result.error);
     }
   };
 
@@ -580,7 +620,7 @@ function App() {
   );
 
   // Epic loading screen → welcome crossfade (sequential: loading exits fully before welcome fades in)
-  if (showLoading) {
+  if (showLoading && !location.pathname.startsWith('/receive')) {
     return (
       <>
         {sharedAmbient}
@@ -598,7 +638,7 @@ function App() {
     );
   }
 
-  if (authLoading) {
+  if (authLoading && !location.pathname.startsWith('/receive')) {
     return (
       <>
         {sharedAmbient}
@@ -613,46 +653,48 @@ function App() {
   }
 
   // Unified welcome ↔ login transition area
-  const showWelcomeLayer = showWelcome || welcomeExiting;
-  const showLoginLayer = showLoginPage && !user;
+  const showWelcomeLayer = (showWelcome || welcomeExiting) && !location.pathname.startsWith('/receive');
+  const showLoginLayer = showLoginPage && !user && !location.pathname.startsWith('/receive');
 
   if (showWelcomeLayer || showLoginLayer) {
     return (
       <>
         {sharedAmbient}
-        {showWelcomeLayer && (
-          <div
-            key="welcome-wrapper"
-            className="fixed inset-0 z-10"
-            style={{
-              opacity: welcomeExiting ? 0 : welcomeVisible ? 1 : 0,
-              transition: 'opacity 700ms cubic-bezier(0.16, 1, 0.3, 1)',
-              pointerEvents: welcomeExiting ? 'none' : 'auto',
-            }}
-          >
-            <WelcomeScreen onGetStarted={handleWelcomeGetStarted} />
-          </div>
-        )}
-        {showLoginLayer && (
-          <div
-            key="login-wrapper"
-            className="fixed inset-0 z-10"
-            style={{
-              opacity: loginVisible ? 1 : 0,
-              transition: 'opacity 700ms cubic-bezier(0.16, 1, 0.3, 1)',
-              pointerEvents: loginVisible ? 'auto' : 'none',
-            }}
-          >
-            <LoginPage
-              onSuccess={handleAuth}
-              onGuestMode={() => {
-                setShowLoginPage(false);
-                setShowGuestModal(true);
+        <div className="fixed inset-0 z-10">
+          {showWelcomeLayer && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                opacity: welcomeExiting ? 0 : welcomeVisible ? 1 : 0,
+                transition: 'opacity 700ms cubic-bezier(0.16, 1, 0.3, 1)',
+                pointerEvents: welcomeExiting ? 'none' : 'auto',
               }}
-              onBack={handleBackToWelcome}
-            />
-          </div>
-        )}
+            >
+              <WelcomeScreen onGetStarted={handleWelcomeGetStarted} />
+            </div>
+          )}
+          {showLoginLayer && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                opacity: loginVisible ? 1 : 0,
+                transition: 'opacity 700ms cubic-bezier(0.16, 1, 0.3, 1)',
+                pointerEvents: loginVisible ? 'auto' : 'none',
+              }}
+            >
+              <LoginPage
+                onSuccess={handleAuth}
+                onGuestMode={() => {
+                  setShowLoginPage(false);
+                  setShowGuestModal(true);
+                }}
+                onBack={handleBackToWelcome}
+              />
+            </div>
+          )}
+        </div>
       </>
     );
   }
@@ -663,20 +705,21 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen relative overflow-hidden flex flex-col">
+    <div className="min-h-screen relative overflow-y-auto overflow-x-hidden flex flex-col">
       <AmbientBackground density="sparse" />
 
       {/* Header */}
       <header className="bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 sticky top-0 z-40 backdrop-blur-sm bg-white/90 dark:bg-slate-800/90">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center space-x-3">
-              <div className="bg-gradient-to-br from-blue-600 to-blue-700 p-2 rounded-xl">
-                <UploadIcon className="w-6 h-6 text-white" />
+        <div className="max-w-7xl mx-auto px-2 sm:px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-14 sm:h-16">
+            <div className="flex items-center space-x-2 sm:space-x-3">
+              <div className="relative w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-600 shadow-lg flex items-center justify-center">
+                <Share2 className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                <Zap className="absolute -top-0.5 -right-0.5 w-3 h-3 sm:w-4 sm:h-4 text-yellow-400 fill-yellow-400" />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-gray-900 dark:text-white">UniShare</h1>
-                <p className="text-xs text-gray-500 dark:text-gray-400">Fast & Secure File Sharing</p>
+                <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">UniShare</h1>
+                <p className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 hidden sm:block">Fast & Secure File Sharing</p>
               </div>
             </div>
 
@@ -762,7 +805,7 @@ function App() {
                   <button
                     onClick={() => !user.is_guest && setShowAvatarPicker(true)}
                     disabled={user.is_guest}
-                    title={user.is_guest ? 'Sign in to set an avatar' : 'Change avatar'}
+                    title={user.is_guest ? 'Sign in to set an avatar' : 'Change avatar & username'}
                     className={`hidden sm:flex items-center space-x-2 px-3 py-2 bg-gray-100 dark:bg-slate-700 rounded-lg ${user.is_guest ? 'cursor-default' : 'hover:bg-gray-200 dark:hover:bg-slate-600 cursor-pointer'}`}
                   >
                     {user.avatar_url ? (
@@ -773,6 +816,9 @@ function App() {
                     <span className="text-sm font-medium text-gray-900 dark:text-white">
                       {user.username}
                     </span>
+                    {!user.is_guest && (
+                      <Pencil className="w-3.5 h-3.5 text-gray-400" />
+                    )}
                     {user.is_guest && (
                       <span className="text-xs px-2 py-0.5 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 rounded">
                         Guest
@@ -846,7 +892,7 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-2 sm:px-4 sm:px-6 lg:px-8 py-3 sm:py-8 relative z-10 overflow-y-auto">
         {user && (
           <Routes>
             <Route path="/" element={
@@ -904,7 +950,7 @@ function App() {
                   const publicFiles = files.filter((f) => f.owner_id !== user.id);
 
                   const renderGrid = (list) => (
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid gap-3 sm:gap-4 grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-3">
                       {list.map((file) => (
                         <FileCard
                           key={file.id}
@@ -1069,16 +1115,18 @@ function App() {
       {/* Modals */}
       <GuestModal
         isOpen={showGuestModal && !user}
-        onClose={() => { }}
+        onClose={() => { setShowGuestModal(false); setShowLoginPage(true); setGuestLoginError(''); }}
         onSubmit={handleGuestLogin}
+        error={guestLoginError}
+        onClearError={() => setGuestLoginError('')}
       />
 
-      <AvatarPickerModal
+      <ProfileModal
         open={showAvatarPicker && !!user && !user.is_guest}
         onClose={() => setShowAvatarPicker(false)}
         token={token}
-        currentAvatar={user?.avatar_url || null}
-        onSaved={(url) => setUser((prev) => (prev ? { ...prev, avatar_url: url } : prev))}
+        user={user}
+        onUpdated={(updates) => setUser((prev) => prev ? { ...prev, ...updates } : prev)}
       />
 
       <AuthModal
@@ -1123,6 +1171,9 @@ function App() {
         onConnect={handleDriveConnectNow}
         onSkip={handleDriveConnectSkip}
       />
+
+      {/* Rename Modal */}
+      
     </div>
   );
 }
