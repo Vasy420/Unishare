@@ -2548,11 +2548,17 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 # CORS middleware - Configure based on deployment
 # For production, set explicit frontend origins (comma-separated).
 raw_origins = os.getenv("ALLOWED_ORIGINS", os.getenv("CORS_ORIGINS", "*")).strip()
-ALLOWED_ORIGINS = [o.strip() for o in raw_origins.split(",") if o.strip()] if raw_origins else ["*"]
+
+def _clean_origin(v: str) -> str:
+    return v.strip().strip('"').strip("'")
+
+ALLOWED_ORIGINS = [_clean_origin(o) for o in raw_origins.split(",") if _clean_origin(o)] if raw_origins else ["*"]
 use_wildcard_cors = ALLOWED_ORIGINS == ["*"]
+origin_regex = _clean_origin(os.getenv("CORS_ORIGIN_REGEX", "")) or None
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"] if use_wildcard_cors else ALLOWED_ORIGINS,
+    allow_origin_regex=origin_regex,
     # Browsers reject wildcard origin when credentials are enabled.
     allow_credentials=not use_wildcard_cors,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
