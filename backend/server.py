@@ -2546,12 +2546,15 @@ async def add_security_headers(request: Request, call_next):
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # CORS middleware - Configure based on deployment
-# For production, replace "*" with your actual frontend domain
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", os.getenv("CORS_ORIGINS", "*")).split(",")
+# For production, set explicit frontend origins (comma-separated).
+raw_origins = os.getenv("ALLOWED_ORIGINS", os.getenv("CORS_ORIGINS", "*")).strip()
+ALLOWED_ORIGINS = [o.strip() for o in raw_origins.split(",") if o.strip()] if raw_origins else ["*"]
+use_wildcard_cors = ALLOWED_ORIGINS == ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS != ["*"] else ["*"],
-    allow_credentials=True,
+    allow_origins=["*"] if use_wildcard_cors else ALLOWED_ORIGINS,
+    # Browsers reject wildcard origin when credentials are enabled.
+    allow_credentials=not use_wildcard_cors,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["X-Process-Time"],
