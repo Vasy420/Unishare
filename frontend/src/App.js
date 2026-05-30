@@ -208,15 +208,16 @@ function App() {
     }
   }, [authLoading, user, showWelcome, welcomeExiting, location]);
 
-  // Fetch files when user is available
+  // Fetch files + connect signaling when user id is available.
+  // Depend only on user.id to avoid reconnect churn when non-critical
+  // user fields (e.g. muted_until) change.
   useEffect(() => {
-    if (user) {
+    if (user?.id) {
       fetchFiles();
       webrtcManager.connect(user.id, BACKEND_URL, user.username, user.emoji);
       if (isOfflineMode()) {
         console.info('Offline mode enabled. P2P will use LAN signaling only.');
       }
-      webrtcManager.updateUserInfo(user.username, user.emoji);
 
       webrtcManager.onFileReceived = (filename, blob, peerId, metadata = {}) => {
         if (metadata.savedToDisk) {
@@ -260,11 +261,17 @@ function App() {
     }
 
     return () => {
-      if (user) {
+      if (user?.id) {
         webrtcManager.disconnect();
       }
     };
-  }, [user]);
+  }, [user?.id]);
+
+  // Keep signaling profile in sync without forcing reconnects.
+  useEffect(() => {
+    if (!user?.id) return;
+    webrtcManager.updateUserInfo(user.username, user.emoji);
+  }, [user?.id, user?.username, user?.emoji]);
 
   useEffect(() => {
     if (!user || !token) return;

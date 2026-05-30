@@ -373,7 +373,12 @@ class ConnectionManager:
             try:
                 await self.active_connections[user_id].send_json(message)
             except Exception as e:
-                logger.error(f"Error sending message to {user_id}: {e}")
+                msg = str(e).lower()
+                # Common transient WS shutdown races are expected during reconnects.
+                if "not connected" in msg or "accept" in msg or "closed" in msg:
+                    logger.info(f"WS send skipped for {user_id}: {e}")
+                else:
+                    logger.error(f"Error sending message to {user_id}: {e}")
                 self.disconnect(user_id)
     
     async def broadcast_online_users(self):
@@ -2165,7 +2170,11 @@ async def websocket_endpoint(
         await manager.broadcast_online_users()
         await _maybe_schedule_guest_cleanup_on_disconnect(user_id)
     except Exception as e:
-        logger.error(f"WebSocket error for user {user_id}: {e}")
+        msg = str(e).lower()
+        if "not connected" in msg or "accept" in msg or "closed" in msg:
+            logger.info(f"WebSocket closed for user {user_id}: {e}")
+        else:
+            logger.error(f"WebSocket error for user {user_id}: {e}")
         manager.disconnect(user_id)
         await manager.broadcast_online_users()
         await _maybe_schedule_guest_cleanup_on_disconnect(user_id)
