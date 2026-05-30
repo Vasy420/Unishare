@@ -26,9 +26,12 @@ class WebRTCManager {
     this.broadcastPeers = new Map();
     this.presenceInterval = null;
     this.wsConnected = false;
+    this.reconnectTimer = null;
+    this.manualDisconnect = false;
   }
 
   connect(userId, backendUrl, username = null, emoji = null) {
+    this.manualDisconnect = false;
     this.userId = userId;
     this.backendUrl = backendUrl;
     // Preserve existing username/emoji on reconnect if not explicitly provided
@@ -48,8 +51,15 @@ class WebRTCManager {
     }
 
     if (this.ws) {
+      // Replacing socket intentionally; do not trigger reconnect from old onclose.
+      this.ws.__skipReconnect = true;
       this.ws.close();
       this.ws = null;
+    }
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
 
     const wsUrl = backendUrl.replace('https://', 'wss://').replace('http://', 'ws://');
@@ -70,6 +80,10 @@ class WebRTCManager {
     this.ws.onopen = () => {
       this.wsConnected = true;
       this.reconnectAttempts = 0;
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
     };
 
     this.ws.onmessage = async (event) => {
@@ -88,19 +102,30 @@ class WebRTCManager {
       }
     };
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event) => {
       console.log('WebSocket closed');
+      if (event?.target?.__skipReconnect) {
+        return;
+      }
+      if (this.manualDisconnect) {
+        return;
+      }
+      if (!this.backendUrl) {
+        return;
+      }
       if (!this.wsConnected && isOfflineMode()) {
         this.enableBroadcastSignaling();
         return;
       }
       // Attempt to reconnect
-      if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      if (this.reconnectAttempts < this.maxReconnectAttempts && !this.reconnectTimer) {
         this.reconnectAttempts++;
-        setTimeout(() => {
-          console.log(`Reconnecting... Attempt ${this.reconnectAttempts}`);
+        const attempt = this.reconnectAttempts;
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = null;
+          console.log(`Reconnecting... Attempt ${attempt}`);
           this.connect(this.userId, this.backendUrl, this.username, this.emoji);
-        }, 2000 * this.reconnectAttempts);
+        }, 2000 * attempt);
       }
     };
   }
@@ -618,6 +643,11 @@ class WebRTCManager {
   }
 
   disconnect() {
+    this.manualDisconnect = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     // Close all peer connections
     for (const peerId of this.peers.keys()) {
       this.closePeerConnection(peerId);
@@ -625,6 +655,7 @@ class WebRTCManager {
 
     // Close WebSocket
     if (this.ws) {
+      this.ws.__skipReconnect = true;
       this.ws.close();
       this.ws = null;
     }

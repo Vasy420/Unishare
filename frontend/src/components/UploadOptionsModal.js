@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 
 const CLOUD_UPLOAD_MAX_BYTES = 100 * 1024 * 1024; // keep in sync with App.js
 const CLOUD_UPLOAD_MAX_LABEL = '100 MB';
+const MAX_QR_LINK_LENGTH = 1800;
 
 const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading, dataLimitReached }) => {
     const { user } = useAuth();
@@ -98,7 +99,11 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading, dataLi
                                 const thumb = canvas.toDataURL('image/jpeg', 0.4);
                                 if (userId) {
                                     const link = `${window.location.origin}/receive?peer=${userId}&file=${fileId}&name=${encodeURIComponent(fileToHost.name)}&size=${fileToHost.size}&from=${encodeURIComponent(username)}&emoji=${encodeURIComponent(emoji)}&thumb=${encodeURIComponent(thumb)}`;
-                                    setP2pLink(link);
+                                    // Avoid crashing QR generator with oversized payloads.
+                                    // Keep the shorter non-thumb link when the thumb variant is too long.
+                                    if (link.length <= MAX_QR_LINK_LENGTH) {
+                                        setP2pLink(link);
+                                    }
                                 }
                             };
                             img.src = e.target.result;
@@ -357,7 +362,7 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading, dataLi
                             </div>
 
                             {/* QR Code Section */}
-                            {p2pLink && (
+                            {p2pLink && p2pLink.length <= MAX_QR_LINK_LENGTH && (
                                 <div>
                                     <h4 className="flex items-center space-x-2 text-sm font-semibold text-gray-900 dark:text-white mb-3">
                                         <QrCode className="w-4 h-4 text-indigo-500" />
@@ -371,6 +376,14 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading, dataLi
                                             includeMargin={true}
                                         />
                                     </div>
+                                </div>
+                            )}
+
+                            {p2pLink && p2pLink.length > MAX_QR_LINK_LENGTH && (
+                                <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
+                                    <p className="text-xs text-yellow-700 dark:text-yellow-300">
+                                        Link is too long for QR encoding. Use <strong>Copy</strong> to share it.
+                                    </p>
                                 </div>
                             )}
 
