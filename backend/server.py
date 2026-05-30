@@ -9,6 +9,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.errors import OperationFailure
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Dict
 from datetime import datetime, timezone, timedelta
@@ -325,6 +326,16 @@ async def _auto_unmute_loop():
                 await manager.broadcast_online_users()
         except asyncio.CancelledError:
             break
+        except OperationFailure as e:
+            msg = str(e).lower()
+            code = getattr(e, "code", None)
+            if code == 59 or "command update not found" in msg:
+                logger.error(
+                    "Auto-unmute disabled: Mongo target does not support update commands. "
+                    "Use a writable Atlas cluster URI (mongodb+srv://...) instead of a read-only/federated endpoint."
+                )
+                break
+            logger.error(f"Auto-unmute loop error: {e}")
         except Exception as e:
             logger.error(f"Auto-unmute loop error: {e}")
 
@@ -588,6 +599,23 @@ async def ensure_admin_user():
         email = os.getenv("ADMIN_EMAIL", "admin@unishare.app")
         password = os.getenv("ADMIN_PASSWORD")
         generated = False
+
+        # If a user with ADMIN_EMAIL already exists, promote it to admin
+        # instead of trying to insert a duplicate email.
+        existing_by_email = await db.users.find_one({"email": email}, {"_id": 0})
+        if existing_by_email:
+            update_doc = {
+                "is_admin": True,
+                "is_guest": False,
+            }
+            # Optional: if ADMIN_PASSWORD is provided, refresh password hash.
+            if password:
+                update_doc["password_hash"] = hash_password(password)
+
+            await db.users.update_one({"id": existing_by_email["id"]}, {"$set": update_doc})
+            logger.info(f"Promoted existing user to admin: {email}")
+            return
+
         if not password:
             password = secrets.token_urlsafe(12)
             generated = True
