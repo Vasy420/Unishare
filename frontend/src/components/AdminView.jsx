@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
-import { Shield, Trash2, Ban, CheckCircle, RefreshCw, AlertTriangle, VolumeX, Volume2, Pencil, X, Check } from 'lucide-react';
+import { Shield, Trash2, Ban, CheckCircle, RefreshCw, AlertTriangle, VolumeX, Volume2, Pencil, X, Check, Activity, Zap, Clock, Database } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import { toastError, toastSuccess } from '../utils/toast';
 import webrtcManager from '../utils/webrtcManager2';
@@ -44,6 +44,15 @@ const AdminView = ({ token, currentUser }) => {
   const [renamingId, setRenamingId] = useState(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [renameBusy, setRenameBusy] = useState(false);
+
+  // Backend connectivity monitor
+  const [backendHealth, setBackendHealth] = useState({
+    status: 'checking',
+    latency: null,
+    dbLatency: null,
+    uptime: null,
+    lastChecked: null,
+  });
 
   const startRename = (u) => {
     setRenamingId(u.id);
@@ -109,6 +118,50 @@ const AdminView = ({ token, currentUser }) => {
       webrtcManager.onChatEvent = prior;
     };
   }, [fetchAll]);
+
+  // Poll backend health every 5 seconds
+  useEffect(() => {
+    const checkHealth = async () => {
+      const sentAt = performance.now();
+      try {
+        const res = await axios.get(`${API.replace('/api', '')}/health`, {
+          timeout: 10000,
+        });
+        const latency = Math.round(performance.now() - sentAt);
+        setBackendHealth({
+          status: res.data.status === 'healthy' ? 'online' : 'degraded',
+          latency,
+          dbLatency: res.data.database_latency_ms ?? null,
+          uptime: res.data.uptime_seconds ?? null,
+          lastChecked: new Date().toLocaleTimeString(),
+        });
+      } catch {
+        setBackendHealth((prev) => ({
+          ...prev,
+          status: 'offline',
+          latency: null,
+          dbLatency: null,
+          lastChecked: new Date().toLocaleTimeString(),
+        }));
+      }
+    };
+
+    checkHealth();
+    const interval = setInterval(checkHealth, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const formatUptime = (seconds) => {
+    if (!seconds && seconds !== 0) return '—';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    const parts = [];
+    if (h > 0) parts.push(`${h}h`);
+    if (m > 0) parts.push(`${m}m`);
+    parts.push(`${s}s`);
+    return parts.join(' ');
+  };
 
   const deleteFile = (file) =>
     setPendingAction({
@@ -226,6 +279,85 @@ const AdminView = ({ token, currentUser }) => {
           <RefreshCw className="w-4 h-4" />
           <span>Refresh</span>
         </button>
+      </div>
+
+      {/* Backend Health Monitor */}
+      <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* Status Card */}
+        <div className={`rounded-xl border p-4 flex items-center space-x-3 ${
+          backendHealth.status === 'online'
+            ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800'
+            : backendHealth.status === 'degraded'
+            ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
+            : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+        }`}>
+          <div className={`p-2 rounded-lg ${
+            backendHealth.status === 'online'
+              ? 'bg-emerald-100 dark:bg-emerald-900/40'
+              : backendHealth.status === 'degraded'
+              ? 'bg-yellow-100 dark:bg-yellow-900/40'
+              : 'bg-red-100 dark:bg-red-900/40'
+          }`}>
+            <Activity className={`w-5 h-5 ${
+              backendHealth.status === 'online'
+                ? 'text-emerald-600 dark:text-emerald-400'
+                : backendHealth.status === 'degraded'
+                ? 'text-yellow-600 dark:text-yellow-400'
+                : 'text-red-600 dark:text-red-400'
+            }`} />
+          </div>
+          <div>
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Backend Status</p>
+            <p className={`text-sm font-semibold ${
+              backendHealth.status === 'online'
+                ? 'text-emerald-700 dark:text-emerald-300'
+                : backendHealth.status === 'degraded'
+                ? 'text-yellow-700 dark:text-yellow-300'
+                : 'text-red-700 dark:text-red-300'
+            }`}>
+              {backendHealth.status === 'online' ? 'Online' : backendHealth.status === 'degraded' ? 'Degraded' : 'Offline'}
+            </p>
+          </div>
+        </div>
+
+        {/* Latency Card */}
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-4 flex items-center space-x-3">
+          <div className="bg-blue-100 dark:bg-blue-900/40 p-2 rounded-lg">
+            <Zap className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+          </div>
+          <div>
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400">HTTP Latency</p>
+            <p className="text-sm font-semibold text-gray-900 dark:text-white">
+              {backendHealth.latency !== null ? `${backendHealth.latency} ms` : '—'}
+            </p>
+          </div>
+        </div>
+
+        {/* DB Latency Card */}
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-4 flex items-center space-x-3">
+          <div className="bg-purple-100 dark:bg-purple-900/40 p-2 rounded-lg">
+            <Database className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+          </div>
+          <div>
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400">DB Latency</p>
+            <p className="text-sm font-semibold text-gray-900 dark:text-white">
+              {backendHealth.dbLatency !== null ? `${backendHealth.dbLatency} ms` : '—'}
+            </p>
+          </div>
+        </div>
+
+        {/* Uptime Card */}
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-4 flex items-center space-x-3">
+          <div className="bg-orange-100 dark:bg-orange-900/40 p-2 rounded-lg">
+            <Clock className="w-5 h-5 text-orange-600 dark:text-orange-400" />
+          </div>
+          <div>
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Uptime</p>
+            <p className="text-sm font-semibold text-gray-900 dark:text-white">
+              {formatUptime(backendHealth.uptime)}
+            </p>
+          </div>
+        </div>
       </div>
 
       {error && (

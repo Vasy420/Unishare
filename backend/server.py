@@ -208,6 +208,9 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Server start time for uptime tracking
+SERVER_START_TIME = time.time()
+
 # Rate limiting setup
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
@@ -2507,13 +2510,18 @@ async def root():
 @limiter.limit("100/minute")
 async def health_check(request: Request):
     """Health check endpoint for monitoring"""
+    start = time.time()
     try:
         # Check MongoDB connection
         await db.command("ping")
+        db_latency = (time.time() - start) * 1000
+        uptime = time.time() - SERVER_START_TIME
         return {
             "status": "healthy",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "database": "connected",
+            "database_latency_ms": round(db_latency, 2),
+            "uptime_seconds": round(uptime, 2),
             "version": "2.0.0"
         }
     except Exception as e:
