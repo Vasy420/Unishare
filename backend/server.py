@@ -26,6 +26,7 @@ import uuid
 import shutil
 import io
 import json
+import zipfile
 import requests
 import time
 import re
@@ -456,6 +457,7 @@ class FileMetadata(BaseModel):
     drive_file_id: Optional[str] = None
     encrypted_key: Optional[str] = None
     reactions: List[str] = Field(default_factory=list)
+    folder_path: Optional[str] = None  # Relative path within uploaded folder (e.g., "folder/subfolder")
 
 class FileResponse(BaseModel):
     id: str
@@ -471,11 +473,11 @@ class FileResponse(BaseModel):
     owner_type: str
     is_public: bool
     source: str
-    source: str
     drive_file_id: Optional[str] = None
     shared_with_users: List[str] = []
     reaction_count: int = 0
     reacted: bool = False
+    folder_path: Optional[str] = None
 
 class HistoryResponse(BaseModel):
     id: str
@@ -1623,6 +1625,7 @@ async def upload_file(
     file: UploadFile = File(...),
     is_public: bool = Form(True),
     shared_with: str = Form(""), # Comma separated emails
+    folder_path: str = Form(""), # Relative path within uploaded folder
     current_user: User = Depends(get_current_user)
 ):
     """Upload a file - Rate limited to 30 uploads per minute"""
@@ -1675,7 +1678,8 @@ async def upload_file(
             is_public=is_public,
             shared_with_users=shared_users,
             source="upload",
-            encrypted_key=encrypted_key.decode('utf-8')
+            encrypted_key=encrypted_key.decode('utf-8'),
+            folder_path=folder_path if folder_path else None
         )
         
         # Save metadata to MongoDB
@@ -1712,7 +1716,8 @@ async def upload_file(
             owner_type="guest" if current_user.is_guest else "user",
             is_public=is_public,
             source="upload",
-            shared_with_users=shared_users
+            shared_with_users=shared_users,
+            folder_path=folder_path if folder_path else None
         )
     
     except HTTPException:
@@ -1762,7 +1767,8 @@ async def get_files(current_user: Optional[User] = Depends(get_optional_user)):
                 drive_file_id=file_doc.get('drive_file_id'),
                 shared_with_users=file_doc.get('shared_with_users', []),
                 reaction_count=len(file_doc.get('reactions') or []),
-                reacted=(current_user is not None and current_user.id in (file_doc.get('reactions') or []))
+                reacted=(current_user is not None and current_user.id in (file_doc.get('reactions') or [])),
+                folder_path=file_doc.get('folder_path')
             ))
         
         return file_responses
@@ -1830,6 +1836,70 @@ async def download_file(file_id: str, current_user: Optional[User] = Depends(get
     except Exception as e:
         logger.error(f"Download failed: {e}")
         raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+
+@api_router.get("/files/download-folder")
+async def download_folder(
+    folder_path: str = Query(..., description="Folder name to download"),
+    current_user: Optional[User] = Depends(get_optional_user)
+):
+    """Download all files in a folder as a zip archive"""
+    try:
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        # Find all files whose folder_path starts with folder_path + "/"
+        # This matches files in the folder and its subfolders
+        regex_pattern = f"^{re.escape(folder_path)}/"
+        
+        query = {
+            "owner_id": current_user.id,
+            "folder_path": {"$regex": regex_pattern}
+        }
+        files = await db.files.find(query, {"_id": 0}).to_list(1000)
+        
+        if not files:
+            raise HTTPException(status_code=404, detail="Folder not found or empty")
+        
+        # Create temp zip file
+        zip_filename = f"{folder_path}_{uuid.uuid4().hex[:8]}.zip"
+        zip_path = UPLOAD_DIR / zip_filename
+        
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for file_doc in files:
+                stored_path = UPLOAD_DIR / file_doc['filename']
+                if not stored_path.exists():
+                    continue
+                
+                # Use the stored folder_path as the arcname to preserve structure
+                arcname = file_doc.get('folder_path') or file_doc['original_filename']
+                
+                # Decrypt file
+                if file_doc.get('encrypted_key'):
+                    with open(stored_path, "rb") as f:
+                        encrypted = f.read()
+                    decrypted = decrypt_file_content(
+                        encrypted, 
+                        file_doc['encrypted_key'].encode('utf-8')
+                    )
+                    zf.writestr(arcname, decrypted)
+                else:
+                    zf.write(stored_path, arcname)
+        
+        # Return the zip file
+        response = FastAPIFileResponse(
+            path=zip_path,
+            filename=f"{folder_path}.zip",
+            media_type="application/zip"
+        )
+        
+        return response
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Folder download failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Folder download failed: {str(e)}")
+
 
 @api_router.delete("/files/{file_id}")
 async def delete_file(file_id: str, current_user: User = Depends(get_current_user)):

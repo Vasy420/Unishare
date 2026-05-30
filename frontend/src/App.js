@@ -10,6 +10,7 @@ import AuthModal from './components/AuthModal';
 import LoginPage from './components/LoginPage';
 import UploadZone from './components/UploadZone';
 import FileCard from './components/FileCard';
+import FolderCard from './components/FolderCard';
 import FilePreviewModal from './components/FilePreviewModal';
 import ProgressIndicator from './components/ProgressIndicator';
 import ShareModal2 from './components/ShareModal2';
@@ -321,13 +322,97 @@ function App() {
     }
   };
 
-  const handleFileUpload = async (file, options = {}) => {
+  const handleFileUpload = async (fileOrFolder, options = {}) => {
     if (!user || !token) {
       alert('Please log in to upload files');
       return;
     }
 
     setShowUploadModal(false);
+
+    // Handle folder upload
+    if (fileOrFolder && fileOrFolder.files && Array.isArray(fileOrFolder.files)) {
+      const { folderName, files } = fileOrFolder;
+
+      setUploading(true);
+      setUploadProgress({ progress: 0, speed: 0, timeRemaining: 0, fileName: folderName });
+
+      let uploadedCount = 0;
+      let skippedCount = 0;
+      const failures = []; // { name, reason }
+
+      for (const { file, relativePath } of files) {
+        if (file.size > CLOUD_UPLOAD_MAX_BYTES) {
+          skippedCount++;
+          failures.push({ name: file.name, reason: `Too large (> ${CLOUD_UPLOAD_MAX_LABEL})` });
+          continue;
+        }
+
+        setUploadProgress({
+          progress: Math.round((uploadedCount / files.length) * 100),
+          speed: 0,
+          timeRemaining: 0,
+          fileName: `${folderName} (${uploadedCount + 1}/${files.length})`
+        });
+
+        const formData = new FormData();
+        formData.append('file', file);
+        if (options.isPublic !== undefined) formData.append('is_public', options.isPublic);
+        if (options.sharedWith) formData.append('shared_with', options.sharedWith);
+        formData.append('folder_path', `${folderName}/${relativePath}`);
+
+        try {
+          await axios.post(`${API}/upload`, formData, {
+            headers: {
+              'Content-Type': 'multipart/form-data',
+              'Authorization': `Bearer ${token}`
+            }
+          });
+          uploadedCount++;
+        } catch (error) {
+          const status = error.response?.status;
+          const detail = error.response?.data?.detail || error.message || 'Unknown error';
+          let reason = detail;
+          if (status === 403) {
+            reason = 'Data limit reached (2GB)';
+            setDataLimitReached(true);
+            failures.push({ name: file.name, reason });
+            break; // stop trying, limit reached
+          } else if (status === 413) {
+            reason = `Too large (> ${CLOUD_UPLOAD_MAX_LABEL})`;
+          } else if (status === 429) {
+            reason = 'Rate limit exceeded (30/min)';
+          }
+          failures.push({ name: file.name, reason });
+        }
+      }
+
+      await fetchFiles();
+
+      // Build a detailed report
+      const totalFailed = failures.length;
+      if (totalFailed > 0 || skippedCount > 0) {
+        let msg = `Folder "${folderName}" upload complete:\n${uploadedCount} uploaded`;
+        if (skippedCount > 0) msg += `, ${skippedCount} skipped (too large)`;
+        if (totalFailed > 0) msg += `, ${totalFailed} failed`;
+        msg += '\n\nFailed files:';
+        for (const f of failures.slice(0, 8)) {
+          msg += `\n• ${f.name}: ${f.reason}`;
+        }
+        if (failures.length > 8) msg += `\n...and ${failures.length - 8} more`;
+        window.alert(msg);
+      }
+
+      setTimeout(() => {
+        setUploadProgress(null);
+      }, 2000);
+
+      setUploading(false);
+      return;
+    }
+
+    // Handle single file upload (existing logic)
+    const file = fileOrFolder;
 
     // Handle Google Drive Import
     if (file.source === 'google_drive') {
@@ -503,6 +588,43 @@ function App() {
     } finally {
       setDeleteBusy(false);
     }
+  };
+
+  const handleDownloadFolder = (folder) => {
+    const authToken = localStorage.getItem('unishare_token') || '';
+    const link = document.createElement('a');
+    link.href = `${API}/files/download-folder?folder_path=${encodeURIComponent(folder.folderName)}&token=${encodeURIComponent(authToken)}`;
+    link.setAttribute('download', '');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleDeleteFolder = async (folder) => {
+    if (!folder.files || folder.files.length === 0) return;
+    const confirmed = window.confirm(`Delete folder "${folder.folderName}" and all ${folder.files.length} files inside?`);
+    if (!confirmed) return;
+    setDeleteBusy(true);
+    let deleted = 0;
+    let failed = 0;
+    for (const file of folder.files) {
+      try {
+        await axios.delete(`${API}/files/${file.id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        deleted++;
+      } catch (error) {
+        failed++;
+        console.error(`Failed to delete ${file.id}:`, error);
+      }
+    }
+    await fetchFiles();
+    if (failed > 0) {
+      showToast(`Deleted ${deleted} files, ${failed} failed`, 'warning');
+    } else {
+      showToast(`Deleted folder "${folder.folderName}"`, 'success');
+    }
+    setDeleteBusy(false);
   };
 
   const handleShare = (file) => {
@@ -923,11 +1045,11 @@ function App() {
                 <div className="mb-8">
                   <UploadZone
                     onFileSelect={(file) => {
-                      setSelectedFile(file); // Store file temporarily
-                      setShowUploadModal(true); // Open modal
+                      setSelectedFile(file); // Store file or folder temporarily
+                      setShowUploadModal(true); // Open modal for both files and folders
                     }}
                     uploading={uploading}
-                    disabled={dataLimitReached}
+                    disabled={uploading}
                   />
                   {dataLimitReached && (
                     <div className="mt-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 text-center">
@@ -949,26 +1071,70 @@ function App() {
                   const myFiles = files.filter((f) => f.owner_id === user.id);
                   const publicFiles = files.filter((f) => f.owner_id !== user.id);
 
-                  const renderGrid = (list) => (
-                    <div className="grid gap-3 sm:gap-4 grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-3">
-                      {list.map((file) => (
-                        <FileCard
-                          key={file.id}
-                          file={file}
-                          onDownload={handleDownload}
-                          onDelete={handleDelete}
-                          onShare={handleShare}
-                          onSaveToDrive={handleSaveToDrive}
-                          onPreview={(f) => {
-                            setPreviewFile(f);
-                            setShowPreviewModal(true);
-                          }}
-                          user={user}
-                          token={token}
-                        />
-                      ))}
-                    </div>
-                  );
+                  const groupFilesByFolder = (list) => {
+                    const folders = {};
+                    const individualFiles = [];
+                    for (const file of list) {
+                      if (file.folder_path) {
+                        const folderName = file.folder_path.split('/')[0];
+                        if (!folders[folderName]) {
+                          folders[folderName] = {
+                            folderName,
+                            files: [],
+                            totalSize: 0,
+                            fileCount: 0,
+                            owner_id: file.owner_id,
+                            owner_username: file.owner_username,
+                            owner_type: file.owner_type,
+                          };
+                        }
+                        folders[folderName].files.push(file);
+                        folders[folderName].totalSize += file.size || 0;
+                        folders[folderName].fileCount += 1;
+                      } else {
+                        individualFiles.push(file);
+                      }
+                    }
+                    return { folders: Object.values(folders), individualFiles };
+                  };
+
+                  const renderGrid = (list) => {
+                    const { folders, individualFiles } = groupFilesByFolder(list);
+                    return (
+                      <div className="grid gap-3 sm:gap-4 grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-3">
+                        {folders.map((folder) => (
+                          <FolderCard
+                            key={`folder-${folder.folderName}`}
+                            folder={folder}
+                            onDownload={handleDownloadFolder}
+                            onDelete={handleDeleteFolder}
+                            user={user}
+                          />
+                        ))}
+                        {individualFiles.map((file) => (
+                          <FileCard
+                            key={file.id}
+                            file={file}
+                            onDownload={handleDownload}
+                            onDelete={handleDelete}
+                            onShare={handleShare}
+                            onSaveToDrive={handleSaveToDrive}
+                            onPreview={(f) => {
+                              setPreviewFile(f);
+                              setShowPreviewModal(true);
+                            }}
+                            user={user}
+                            token={token}
+                          />
+                        ))}
+                      </div>
+                    );
+                  };
+
+                  const { folders: myFolders, individualFiles: myIndividual } = groupFilesByFolder(myFiles);
+                  const { folders: publicFolders, individualFiles: publicIndividual } = groupFilesByFolder(publicFiles);
+                  const myCount = myFolders.length + myIndividual.length;
+                  const publicCount = publicFolders.length + publicIndividual.length;
 
                   return (
                     <>
@@ -977,7 +1143,7 @@ function App() {
                           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
                             My Files
                             <span className="ml-2 text-xs font-normal text-gray-500 dark:text-gray-400">
-                              ({myFiles.length})
+                              ({myCount})
                             </span>
                           </h2>
                           {user.is_guest && (
@@ -989,7 +1155,7 @@ function App() {
                             </button>
                           )}
                         </div>
-                        {myFiles.length === 0 ? (
+                        {myCount === 0 ? (
                           <div className="text-center py-10 bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 shadow-sm">
                             <UploadIcon className="w-12 h-12 text-gray-400 mx-auto mb-3" />
                             <p className="text-gray-600 dark:text-gray-400">You haven't uploaded any files yet</p>
@@ -1004,14 +1170,14 @@ function App() {
                           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
                             Public Files
                             <span className="ml-2 text-xs font-normal text-gray-500 dark:text-gray-400">
-                              ({publicFiles.length})
+                              ({publicCount})
                             </span>
                           </h2>
                           <span className="text-xs text-gray-500 dark:text-gray-400">
                             uploaded by other users
                           </span>
                         </div>
-                        {publicFiles.length === 0 ? (
+                        {publicCount === 0 ? (
                           <div className="text-center py-10 bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 shadow-sm">
                             <p className="text-sm text-gray-500 dark:text-gray-400">No public files shared yet</p>
                           </div>
@@ -1151,6 +1317,7 @@ function App() {
         onUpload={handleFileUpload}
         file={selectedFile}
         uploading={uploading}
+        dataLimitReached={dataLimitReached}
       />
 
       {user && driveConfigured && user.google_drive_connected && (

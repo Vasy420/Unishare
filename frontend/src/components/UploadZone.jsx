@@ -1,26 +1,84 @@
 import React, { useRef, useState } from 'react';
-import { Upload, X } from 'lucide-react';
+import { Upload } from 'lucide-react';
 
 const UploadZone = ({ onFileSelect, uploading, disabled }) => {
   const fileInputRef = useRef(null);
   const [dragActive, setDragActive] = useState(false);
+  const [isFolderDrop, setIsFolderDrop] = useState(false);
 
   const handleDrag = (e) => {
     e.preventDefault();
     e.stopPropagation();
     if (e.type === 'dragenter' || e.type === 'dragover') {
       setDragActive(true);
+      // Check if it's a folder drop
+      const items = e.dataTransfer?.items;
+      if (items && items.length > 0) {
+        const entry = items[0].webkitGetAsEntry?.();
+        setIsFolderDrop(entry?.isDirectory || false);
+      }
     } else if (e.type === 'dragleave') {
       setDragActive(false);
+      setIsFolderDrop(false);
     }
   };
 
-  const handleDrop = (e) => {
+  // Recursively collect files from a dropped folder
+  const traverseFileTree = async (item, path = '') => {
+    const files = [];
+    
+    if (item.isFile) {
+      return new Promise((resolve) => {
+        item.file((file) => {
+          resolve([{ file, relativePath: path }]);
+        });
+      });
+    } else if (item.isDirectory) {
+      const dirReader = item.createReader();
+      return new Promise((resolve) => {
+        const readEntries = () => {
+          dirReader.readEntries(async (entries) => {
+            if (entries.length === 0) {
+              resolve(files);
+              return;
+            }
+            for (const entry of entries) {
+              const entryPath = path ? `${path}/${entry.name}` : entry.name;
+              const entryFiles = await traverseFileTree(entry, entryPath);
+              files.push(...entryFiles);
+            }
+            readEntries(); // Continue reading (Chrome batches entries)
+          });
+        };
+        readEntries();
+      });
+    }
+    return files;
+  };
+
+  const handleDrop = async (e) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
 
-    if (e.dataTransfer.files && e.dataTransfer.files[0] && !disabled && !uploading) {
+    if (disabled || uploading) return;
+
+    const items = e.dataTransfer?.items;
+    if (items && items.length > 0) {
+      // Check for folder drop
+      const entry = items[0].webkitGetAsEntry?.();
+      if (entry && entry.isDirectory) {
+        const folderName = entry.name;
+        const files = await traverseFileTree(entry);
+        if (files.length > 0) {
+          onFileSelect({ folderName, files });
+        }
+        return;
+      }
+    }
+
+    // Single file drop
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       onFileSelect(e.dataTransfer.files[0]);
     }
   };
@@ -71,7 +129,7 @@ const UploadZone = ({ onFileSelect, uploading, disabled }) => {
         </div>
         <div>
           <p className="text-sm sm:text-base font-medium text-gray-700 dark:text-gray-300">
-            {uploading ? 'Uploading...' : dragActive ? 'Drop your file here' : 'Tap to upload'}
+            {uploading ? 'Uploading...' : dragActive ? (isFolderDrop ? 'Drop folder here' : 'Drop your file here') : 'Tap to upload'}
           </p>
           <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1">
             Any file type supported

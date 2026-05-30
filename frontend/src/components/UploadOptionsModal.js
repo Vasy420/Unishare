@@ -8,10 +8,14 @@ import { useAuth } from '../contexts/AuthContext';
 const CLOUD_UPLOAD_MAX_BYTES = 100 * 1024 * 1024; // keep in sync with App.js
 const CLOUD_UPLOAD_MAX_LABEL = '100 MB';
 
-const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
+const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading, dataLimitReached }) => {
     const { user } = useAuth();
     const isDriveFile = file?.source === 'google_drive' || !!file?.webViewLink;
-    const exceedsCloudCap = !!file && !isDriveFile && file.size > CLOUD_UPLOAD_MAX_BYTES;
+    const isFolder = !!file && !!file.files && Array.isArray(file.files);
+    const fileSize = isFolder
+        ? file.files.reduce((sum, f) => sum + (f.file?.size || 0), 0)
+        : (file?.size || 0);
+    const exceedsCloudCap = !!file && !isDriveFile && !isFolder && file.size > CLOUD_UPLOAD_MAX_BYTES;
     const [activeTab, setActiveTab] = useState(isDriveFile ? 'upload' : 'share'); // Default to upload for Drive files
     const [shareOptions, setShareOptions] = useState({
         isPublic: true,
@@ -22,11 +26,28 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
     const [copied, setCopied] = useState(false);
     const [peerStatus, setPeerStatus] = useState({}); // userId -> {label, kind}
     const [customName, setCustomName] = useState('');
+    const [zippedFile, setZippedFile] = useState(null);
+    const [zipping, setZipping] = useState(false);
+    const [zippingProgress, setZippingProgress] = useState(0);
     const qrRef = useRef(null);
 
     useEffect(() => {
-        if (file) setCustomName(file.name || '');
-    }, [file]);
+        if (file) setCustomName(isFolder ? file.folderName : (file.name || ''));
+    }, [file, isFolder]);
+
+    const zipFolder = async (folder) => {
+        const JSZip = (await import('jszip')).default;
+        const zip = new JSZip();
+        const total = folder.files.length;
+        for (let i = 0; i < total; i++) {
+            const { file: f, relativePath } = folder.files[i];
+            zip.file(relativePath, f);
+            setZippingProgress(Math.round(((i + 1) / total) * 100));
+        }
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const zipFile = new File([blob], `${folder.folderName}.zip`, { type: 'application/zip' });
+        return zipFile;
+    };
 
     const setStatusForPeer = (userId, label, kind, autoClearMs = 0) => {
         setPeerStatus(prev => ({ ...prev, [userId]: { label, kind } }));
@@ -43,41 +64,62 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
 
     useEffect(() => {
         if (isOpen && file) {
-            // Handle P2P/Drive Link Generation
+            // Reset zip state on open
+            setZippedFile(null);
+            setZipping(false);
+            setZippingProgress(0);
+
             if (isDriveFile && file.webViewLink) {
                 setP2pLink(file.webViewLink);
             } else if (!isDriveFile) {
-                const fileId = webrtcManager.hostFile(file);
-                const userId = webrtcManager.userId;
-                const username = user?.username || 'Someone';
-                const emoji = user?.emoji || '👤';
+                const setupP2PLink = (fileToHost) => {
+                    const fileId = webrtcManager.hostFile(fileToHost);
+                    const userId = webrtcManager.userId;
+                    const username = user?.username || 'Someone';
+                    const emoji = user?.emoji || '👤';
 
-                if (userId) {
-                    const link = `${window.location.origin}/receive?peer=${userId}&file=${fileId}&name=${encodeURIComponent(file.name)}&size=${file.size}&from=${encodeURIComponent(username)}&emoji=${encodeURIComponent(emoji)}`;
-                    setP2pLink(link);
-                }
+                    if (userId) {
+                        const link = `${window.location.origin}/receive?peer=${userId}&file=${fileId}&name=${encodeURIComponent(fileToHost.name)}&size=${fileToHost.size}&from=${encodeURIComponent(username)}&emoji=${encodeURIComponent(emoji)}`;
+                        setP2pLink(link);
+                    }
 
-                if (/\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(file.name) && file.type.startsWith('image/')) {
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        const img = new Image();
-                        img.onload = () => {
-                            const canvas = document.createElement('canvas');
-                            const maxSize = 80;
-                            const scale = Math.min(maxSize / img.width, maxSize / img.height);
-                            canvas.width = Math.round(img.width * scale);
-                            canvas.height = Math.round(img.height * scale);
-                            const ctx = canvas.getContext('2d');
-                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                            const thumb = canvas.toDataURL('image/jpeg', 0.4);
-                            if (userId) {
-                                const link = `${window.location.origin}/receive?peer=${userId}&file=${fileId}&name=${encodeURIComponent(file.name)}&size=${file.size}&from=${encodeURIComponent(username)}&emoji=${encodeURIComponent(emoji)}&thumb=${encodeURIComponent(thumb)}`;
-                                setP2pLink(link);
-                            }
+                    if (/\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(fileToHost.name) && fileToHost.type.startsWith('image/')) {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            const img = new Image();
+                            img.onload = () => {
+                                const canvas = document.createElement('canvas');
+                                const maxSize = 80;
+                                const scale = Math.min(maxSize / img.width, maxSize / img.height);
+                                canvas.width = Math.round(img.width * scale);
+                                canvas.height = Math.round(img.height * scale);
+                                const ctx = canvas.getContext('2d');
+                                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                                const thumb = canvas.toDataURL('image/jpeg', 0.4);
+                                if (userId) {
+                                    const link = `${window.location.origin}/receive?peer=${userId}&file=${fileId}&name=${encodeURIComponent(fileToHost.name)}&size=${fileToHost.size}&from=${encodeURIComponent(username)}&emoji=${encodeURIComponent(emoji)}&thumb=${encodeURIComponent(thumb)}`;
+                                    setP2pLink(link);
+                                }
+                            };
+                            img.src = e.target.result;
                         };
-                        img.src = e.target.result;
-                    };
-                    reader.readAsDataURL(file);
+                        reader.readAsDataURL(fileToHost);
+                    }
+                };
+
+                if (isFolder) {
+                    // Zip folder in background for link generation
+                    setZipping(true);
+                    zipFolder(file).then((zipFile) => {
+                        setZippedFile(zipFile);
+                        setZipping(false);
+                        setupP2PLink(zipFile);
+                    }).catch((err) => {
+                        console.error('Failed to zip folder:', err);
+                        setZipping(false);
+                    });
+                } else {
+                    setupP2PLink(file);
                 }
             }
 
@@ -94,11 +136,16 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                 };
             }
         }
-    }, [isOpen, file, isDriveFile]);
+    }, [isOpen, file, isDriveFile, isFolder]);
 
     if (!isOpen || !file) return null;
 
     const handleCloudUpload = () => {
+        if (isFolder) {
+            // For folders, pass the folder object with options
+            onUpload(file, shareOptions);
+            return;
+        }
         const finalName = (customName || '').trim() || file.name;
         // Rename file if user changed it. Preserves type and content.
         const fileToUpload = finalName === file.name
@@ -170,10 +217,13 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                         </div>
                         <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                                {file.name || file.original_filename}
+                                {isFolder ? file.folderName : (file.name || file.original_filename)}
                             </p>
                             <p className="text-xs text-gray-500 dark:text-gray-400">
-                                {file.size ? (file.size / 1024 / 1024).toFixed(2) + ' MB' : ''}
+                                {isFolder
+                                    ? `${file.files.length} files • ${(fileSize / 1024 / 1024).toFixed(2)} MB total`
+                                    : (file.size ? (file.size / 1024 / 1024).toFixed(2) + ' MB' : '')
+                                }
                             </p>
                         </div>
                     </div>
@@ -194,15 +244,15 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                                     </p>
                                     {onlineUsers.length > 0 ? (
                                         <div className="grid gap-2 max-h-40 overflow-y-auto">
-                                            {onlineUsers.map(user => (
-                                                <div key={user.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-700/50 rounded-lg border border-gray-200 dark:border-slate-700">
+                                            {onlineUsers.map(u => (
+                                                <div key={u.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-700/50 rounded-lg border border-gray-200 dark:border-slate-700">
                                                     <div className="flex items-center space-x-3">
-                                                        <span className="text-xl">{user.emoji || '👤'}</span>
-                                                        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{user.username}</span>
+                                                        <span className="text-xl">{u.emoji || '👤'}</span>
+                                                        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{u.username}</span>
                                                     </div>
                                                       <button
                                                           onClick={async () => {
-                                                              const uid = user.id;
+                                                              const uid = u.id;
                                                               try {
                                                                   setStatusForPeer(uid, 'Connecting...', 'pending');
                                                                   if (!webrtcManager.canSendViaBroadcast(uid)) {
@@ -213,8 +263,15 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                                                                           await webrtcManager.waitForDataChannelOpen(uid, 15000);
                                                                       }
                                                                   }
+                                                                  let fileToSend = file;
+                                                                  if (isFolder) {
+                                                                      setStatusForPeer(uid, 'Zipping...', 'pending');
+                                                                      const zipFile = zippedFile || await zipFolder(file);
+                                                                      if (!zippedFile) setZippedFile(zipFile);
+                                                                      fileToSend = zipFile;
+                                                                  }
                                                                   setStatusForPeer(uid, 'Sending...', 'pending');
-                                                                  await webrtcManager.sendFile(uid, file, (update) => {
+                                                                  await webrtcManager.sendFile(uid, fileToSend, (update) => {
                                                                       if (update?.type === 'accepted') {
                                                                           setStatusForPeer(uid, 'Sending...', 'pending');
                                                                       } else if (update?.progress !== undefined) {
@@ -234,18 +291,18 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                                                                   }
                                                               }
                                                           }}
-                                                          disabled={peerStatus[user.id]?.kind === 'pending'}
+                                                          disabled={peerStatus[u.id]?.kind === 'pending'}
                                                           className={`px-3 py-1 text-white text-xs font-medium rounded-lg min-w-[80px] ${
-                                                              peerStatus[user.id]?.kind === 'success'
+                                                              peerStatus[u.id]?.kind === 'success'
                                                                   ? 'bg-emerald-600'
-                                                                  : peerStatus[user.id]?.kind === 'error'
+                                                                  : peerStatus[u.id]?.kind === 'error'
                                                                   ? 'bg-red-600'
-                                                                  : peerStatus[user.id]?.kind === 'pending'
+                                                                  : peerStatus[u.id]?.kind === 'pending'
                                                                   ? 'bg-blue-500 cursor-not-allowed'
                                                                   : 'bg-green-600 hover:bg-green-700'
                                                           }`}
                                                       >
-                                                         {peerStatus[user.id]?.label || 'Send'}
+                                                         {peerStatus[u.id]?.label || 'Send'}
                                                      </button>
                                                 </div>
                                             ))}
@@ -262,7 +319,14 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                                     <LinkIcon className="w-4 h-4 text-blue-500" />
                                     <span>{isDriveFile ? 'Google Drive Link' : 'Share Link (P2P)'}</span>
                                 </h4>
-                                {p2pLink ? (
+                                {isFolder && zipping ? (
+                                    <div className="space-y-2">
+                                        <div className="w-full bg-gray-200 dark:bg-slate-700 rounded-full h-2">
+                                            <div className="bg-blue-600 h-2 rounded-full transition-all" style={{ width: `${zippingProgress}%` }}></div>
+                                        </div>
+                                        <p className="text-xs text-gray-500 dark:text-gray-400">Preparing folder for sharing... {zippingProgress}%</p>
+                                    </div>
+                                ) : p2pLink ? (
                                     <div className="space-y-3">
                                         <div className="flex space-x-2">
                                             <input
@@ -316,7 +380,12 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
 
                     {activeTab === 'upload' && (
                         <div className="space-y-4 animate-in slide-in-from-right-4 fade-in duration-300">
-                            {exceedsCloudCap && (
+                            {dataLimitReached && (
+                                <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-sm text-red-700 dark:text-red-300">
+                                    You've reached the 2GB guest cloud limit. Cloud upload is disabled, but you can still use the <strong>Share</strong> tab to send files directly to peers — no size limit.
+                                </div>
+                            )}
+                            {exceedsCloudCap && !isFolder && (
                                 <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-sm text-red-700 dark:text-red-300">
                                     File is {(file.size / (1024 * 1024)).toFixed(1)} MB. Cloud uploads are capped at {CLOUD_UPLOAD_MAX_LABEL}. Use the Share tab to send it directly to a peer.
                                 </div>
@@ -421,10 +490,10 @@ const UploadOptionsModal = ({ isOpen, onClose, onUpload, file, uploading }) => {
                         </button>
                         <button
                             onClick={handleCloudUpload}
-                            disabled={uploading || exceedsCloudCap}
-                            className={`flex-1 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md flex items-center justify-center space-x-2 ${(uploading || exceedsCloudCap) ? 'opacity-70 cursor-not-allowed' : ''}`}
+                            disabled={uploading || exceedsCloudCap || dataLimitReached}
+                            className={`flex-1 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md flex items-center justify-center space-x-2 ${(uploading || exceedsCloudCap || dataLimitReached) ? 'opacity-70 cursor-not-allowed' : ''}`}
                         >
-                            {uploading ? 'Uploading...' : exceedsCloudCap ? `Too large (> ${CLOUD_UPLOAD_MAX_LABEL})` : 'Upload to Cloud'}
+                            {uploading ? 'Uploading...' : exceedsCloudCap ? `Too large (> ${CLOUD_UPLOAD_MAX_LABEL})` : dataLimitReached ? 'Guest limit reached' : 'Upload to Cloud'}
                         </button>
                     </div>
                 )}
