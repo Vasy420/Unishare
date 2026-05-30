@@ -54,8 +54,17 @@ db = client[os.environ['DB_NAME']]
 UPLOAD_DIR = ROOT_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
+
+# Enforce a real SECRET_KEY in production, but auto-generate one for dev
+if not SECRET_KEY:
+    if os.getenv("ENV", "development").lower() == "production":
+        logger.error("FATAL: SECRET_KEY environment variable is required in production.")
+        raise RuntimeError("SECRET_KEY is not set. Generate one with: openssl rand -hex 32")
+    SECRET_KEY = secrets.token_hex(32)
+    logger.warning("WARNING: Using auto-generated SECRET_KEY for development only.")
+    logger.warning("Set SECRET_KEY in your .env file before deploying to production.")
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
 # Encryption Keys Setup

@@ -36,6 +36,10 @@ dist
 .env.local
 .env.*.local
 
+# Allow example templates
+!.env.example
+!**/.env.example
+
 *token.json*
 *credentials.json*
 
@@ -90,10 +94,6 @@ backend/ADMIN_CREDENTIALS.txt
 
 # Uploads (user data)
 backend/uploads/
-
-# Docker
-.env.example
-backend/.env.example
 
 # Development artifacts
 .emergent/
