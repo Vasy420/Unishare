@@ -45,6 +45,9 @@ const AdminView = ({ token, currentUser }) => {
   const [renameDraft, setRenameDraft] = useState('');
   const [renameBusy, setRenameBusy] = useState(false);
 
+  // Bulk file selection
+  const [selectedFileIds, setSelectedFileIds] = useState(new Set());
+
   // Backend connectivity monitor
   const [backendHealth, setBackendHealth] = useState({
     status: 'checking',
@@ -95,6 +98,7 @@ const AdminView = ({ token, currentUser }) => {
       ]);
       setUsers(u.data || []);
       setFiles(f.data || []);
+      setSelectedFileIds(new Set());
     } catch (e) {
       setError(e.response?.data?.detail || 'Failed to load admin data');
     } finally {
@@ -173,6 +177,38 @@ const AdminView = ({ token, currentUser }) => {
       target: file,
     });
 
+  // Bulk selection helpers
+  const toggleFileSelection = (fileId) => {
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(fileId)) next.delete(fileId);
+      else next.add(fileId);
+      return next;
+    });
+  };
+
+  const toggleSelectAllFiles = () => {
+    setSelectedFileIds((prev) => {
+      if (prev.size === files.length && files.length > 0) return new Set();
+      return new Set(files.map((f) => f.id));
+    });
+  };
+
+  const clearSelection = () => setSelectedFileIds(new Set());
+
+  const bulkDeleteFiles = () => {
+    if (selectedFileIds.size === 0) return;
+    const count = selectedFileIds.size;
+    setPendingAction({
+      kind: 'bulkDeleteFiles',
+      title: `Delete ${count} files?`,
+      message: `${count} selected file${count > 1 ? 's' : ''} will be permanently removed from disk and database. This cannot be undone.`,
+      confirmLabel: `Delete ${count}`,
+      destructive: true,
+      target: null,
+    });
+  };
+
   const toggleBlock = (u) => {
     if (u.is_admin) return;
     setPendingAction({
@@ -236,6 +272,15 @@ const AdminView = ({ token, currentUser }) => {
         setUsers((prev) => prev.filter((x) => x.id !== target.id));
         setFiles((prev) => prev.filter((f) => f.owner_id !== target.id));
         toastSuccess('User deleted');
+      } else if (kind === 'bulkDeleteFiles') {
+        const ids = Array.from(selectedFileIds);
+        const res = await axios.delete(`${API}/admin/files/bulk-delete`, {
+          headers: authHeaders,
+          params: { file_ids: ids },
+        });
+        setFiles((prev) => prev.filter((f) => !selectedFileIds.has(f.id)));
+        setSelectedFileIds(new Set());
+        toastSuccess(`${res.data.deleted_count} files deleted`);
       }
       setPendingAction(null);
     } catch (e) {
@@ -386,54 +431,96 @@ const AdminView = ({ token, currentUser }) => {
       {loading ? (
         <div className="text-center py-12 text-gray-500 dark:text-gray-400">Loading…</div>
       ) : tab === 'files' ? (
-        <div className="overflow-x-auto bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 dark:bg-slate-900/50 text-gray-600 dark:text-gray-300">
-              <tr>
-                <th className="text-left px-4 py-3">File</th>
-                <th className="text-left px-4 py-3">Owner</th>
-                <th className="text-left px-4 py-3">Size</th>
-                <th className="text-left px-4 py-3">Type</th>
-                <th className="text-left px-4 py-3">Uploaded</th>
-                <th className="text-left px-4 py-3">Source</th>
-                <th className="text-right px-4 py-3">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
-              {files.length === 0 && (
+        <div className="space-y-3">
+          {/* Bulk action bar */}
+          {selectedFileIds.size > 0 && (
+            <div className="flex items-center justify-between p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+              <span className="text-sm font-medium text-red-700 dark:text-red-300">
+                {selectedFileIds.size} file{selectedFileIds.size > 1 ? 's' : ''} selected
+              </span>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={clearSelection}
+                  className="px-3 py-1.5 text-sm rounded-lg bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-600"
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={bulkDeleteFiles}
+                  className="flex items-center space-x-1 px-3 py-1.5 text-sm rounded-lg bg-red-600 hover:bg-red-700 text-white"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Delete {selectedFileIds.size}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="overflow-x-auto bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50 dark:bg-slate-900/50 text-gray-600 dark:text-gray-300">
                 <tr>
-                  <td colSpan="7" className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
-                    No files uploaded
-                  </td>
+                  <th className="px-4 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      checked={files.length > 0 && selectedFileIds.size === files.length}
+                      onChange={toggleSelectAllFiles}
+                      className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                    />
+                  </th>
+                  <th className="text-left px-4 py-3">File</th>
+                  <th className="text-left px-4 py-3">Owner</th>
+                  <th className="text-left px-4 py-3">Size</th>
+                  <th className="text-left px-4 py-3">Type</th>
+                  <th className="text-left px-4 py-3">Uploaded</th>
+                  <th className="text-left px-4 py-3">Source</th>
+                  <th className="text-right px-4 py-3">Actions</th>
                 </tr>
-              )}
-              {files.map((f) => (
-                <tr key={f.id} className="text-gray-800 dark:text-gray-100">
-                  <td className="px-4 py-3 max-w-xs truncate" title={f.original_filename}>
-                    {f.original_filename}
-                  </td>
-                  <td className="px-4 py-3">
-                    {f.owner_username}
-                    <span className="ml-1 text-xs text-gray-400">({f.owner_type})</span>
-                  </td>
-                  <td className="px-4 py-3">{formatBytes(f.size)}</td>
-                  <td className="px-4 py-3 text-xs">{f.content_type || '—'}</td>
-                  <td className="px-4 py-3 text-xs">{formatDate(f.upload_date)}</td>
-                  <td className="px-4 py-3 text-xs">{f.source}</td>
-                  <td className="px-4 py-3 text-right">
-                    <button
-                      disabled={busyId === f.id}
-                      onClick={() => deleteFile(f)}
-                      className="inline-flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 disabled:opacity-50"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      <span>Delete</span>
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
+                {files.length === 0 && (
+                  <tr>
+                    <td colSpan="8" className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                      No files uploaded
+                    </td>
+                  </tr>
+                )}
+                {files.map((f) => (
+                  <tr key={f.id} className={`text-gray-800 dark:text-gray-100 ${selectedFileIds.has(f.id) ? 'bg-red-50/50 dark:bg-red-900/10' : ''}`}>
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedFileIds.has(f.id)}
+                        onChange={() => toggleFileSelection(f.id)}
+                        className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                      />
+                    </td>
+                    <td className="px-4 py-3 max-w-xs truncate" title={f.original_filename}>
+                      {f.original_filename}
+                    </td>
+                    <td className="px-4 py-3">
+                      {f.owner_username}
+                      <span className="ml-1 text-xs text-gray-400">({f.owner_type})</span>
+                    </td>
+                    <td className="px-4 py-3">{formatBytes(f.size)}</td>
+                    <td className="px-4 py-3 text-xs">{f.content_type || '—'}</td>
+                    <td className="px-4 py-3 text-xs">{formatDate(f.upload_date)}</td>
+                    <td className="px-4 py-3 text-xs">{f.source}</td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        disabled={busyId === f.id}
+                        onClick={() => deleteFile(f)}
+                        className="inline-flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 disabled:opacity-50"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        <span>Delete</span>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
         <div className="overflow-x-auto bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700">

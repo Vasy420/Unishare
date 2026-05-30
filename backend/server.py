@@ -1103,6 +1103,41 @@ async def admin_delete_file(file_id: str, admin: User = Depends(get_admin_user))
     return {"success": True}
 
 
+@api_router.delete("/admin/files/bulk-delete")
+async def admin_bulk_delete_files(file_ids: List[str] = Query(..., description="Comma-separated file IDs to delete"), admin: User = Depends(get_admin_user)):
+    """Bulk delete files by IDs. Returns counts of deleted and not-found."""
+    deleted_count = 0
+    not_found = []
+    failed = []
+
+    for file_id in file_ids:
+        file_doc = await db.files.find_one({"id": file_id}, {"_id": 0})
+        if not file_doc:
+            not_found.append(file_id)
+            continue
+
+        if file_doc.get("source") == "upload":
+            try:
+                p = UPLOAD_DIR / file_doc["filename"]
+                if p.exists():
+                    p.unlink()
+            except Exception as ex:
+                logger.warning(f"admin bulk delete: disk unlink failed for {file_id}: {ex}")
+                failed.append(file_id)
+                continue
+
+        await db.files.delete_one({"id": file_id})
+        await update_user_data_shared(file_doc["owner_id"], -file_doc.get("size", 0))
+        deleted_count += 1
+
+    return {
+        "success": True,
+        "deleted_count": deleted_count,
+        "not_found_count": len(not_found),
+        "failed_count": len(failed)
+    }
+
+
 @api_router.post("/admin/users/{user_id}/block")
 async def admin_block_user(user_id: str, admin: User = Depends(get_admin_user)):
     if user_id == admin.id:
